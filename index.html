@@ -141,6 +141,8 @@ textarea{min-height:90px;font-size:14px}
 .goal-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
 .goal-head span{min-width:0}
 .goal-head small{display:block;color:var(--muted);font-size:12px}
+.cert{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--bg);border-radius:10px;padding:6px 6px 6px 12px;font-size:14px}
+.cert .x{background:none;border:0;color:var(--muted);font-size:18px;padding:4px 8px}
 .backup{display:flex;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
 .backup p{margin:0;color:var(--muted);font-size:13px}
 .backup .actions{justify-content:flex-start}
@@ -252,12 +254,15 @@ function cardRate(card,cat){
   });
   return best||fallback||{r:1,e:null};
 }
+/* Certificates (e.g. a companion fare): earned once, used once, with an expiration date. */
+function openCerts(x){return (x.certs||[]).filter(k=>!k.used&&k.expires>=ymd(today())).sort((a,b)=>a.expires.localeCompare(b.expires))}
 function openCredits(cat){
   const t=today(), out=[];
   state.cards.forEach(card=>card.credits.forEach(x=>{
     const cats=x.cats||CREDIT_CATS[x.id]||[]; if(!cats.includes(cat)) return;
     if(PER_YEAR[x.period]){const p=periodOf(x.period,t);const r=x.amount-used(card,x.id,p.start,p.end);if(r>0)out.push({card,x,txt:`${money(r)} left in ${p.label}`})}
     else if(x.period==='perStay') out.push({card,x,txt:`up to ${money(x.amount)} per stay`});
+    else if(x.certable){const oc=openCerts(x);if(oc.length)out.push({card,x,txt:`${oc.length} available, expires ${fmtDate(oc[0].expires)}`})}
     else if(x.period==='perUse'&&x.tip) out.push({card,x,txt:x.tip});
   }));
   return out;
@@ -300,7 +305,7 @@ function atmosAscent(){
   return {id:'atmos-ascent',name:'Atmos Ascent',issuer:'Bank of America',annualFee:95,feeDate:null,pointsUnit:'points',points:0,pointsUpdated:null,since:ymd(today()),
     goal:{label:'Spend for next Companion Fare',short:'Companion Fare spend',target:6000,spent:0,updated:null,note:'Spend $6,000+ in a card year and the $99 Companion Fare arrives on your account anniversary.'},
     credits:[
-      {id:'companion',name:'$99 Companion Fare',amount:0,period:'perUse',cats:['alaska'],tip:'$99 + taxes for a companion, if you have one available',note:'Bring a companion for $99 + taxes (from $23) on Alaska or Hawaiian flights within North America, booked on alaskaair.com. Log what it saved you.'},
+      {id:'companion',name:'$99 Companion Fare',amount:0,period:'perUse',certable:true,certs:[],cats:['alaska'],tip:'$99 + taxes for a companion, if you have one available',note:'Bring a companion for $99 + taxes (from $23) on Alaska or Hawaiian flights within North America, booked on alaskaair.com. Log what it saved you.'},
       {id:'bags',name:'Free checked bags',amount:0,period:'perUse',cats:['alaska'],tip:'first checked bag free for you and up to 6 others when you pay with this card',note:'First bag free for you and up to 6 others on the same reservation when you pay with this card. Log the savings (about $35+ per bag each way).'},
       {id:'inflight',name:'20% back on inflight purchases',amount:0,period:'perUse',cats:['alaska'],tip:'20% back on food and drinks on board',note:'Food, drinks and Wi-Fi bought on board Alaska and Hawaiian. Log the 20% you got back.'}
     ],
@@ -322,7 +327,7 @@ function atmosAscent(){
     logs:[]};
 }
 const CATALOG=[{key:'atmos-ascent',name:'Atmos Rewards Ascent',make:atmosAscent},{key:'cap1-venture',name:'Capital One Venture',make:capOneVenture},{key:'amex-gold',name:'Amex Gold',make:amexGold}];
-function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto','earn-cats-v1','atmos-auto']}}
+function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto','earn-cats-v1','atmos-auto','atmos-companion-2027']}}
 
 let state=null, syncNote='Saved on this phone', sheet=null;
 try{const raw=localStorage.getItem(LS_KEY); if(raw) state=JSON.parse(raw)}catch(e){}
@@ -338,6 +343,16 @@ function migrate(){
   if(!state.added.includes('atmos-auto')){
     state.added.push('atmos-auto');
     if(!state.cards.some(c=>c.id==='atmos-ascent')) state.cards.push(atmosAscent());
+    try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
+  }
+  if(!state.added.includes('atmos-companion-2027')){
+    state.added.push('atmos-companion-2027');
+    const at=state.cards.find(c=>c.id==='atmos-ascent');
+    if(at){
+      const comp=at.credits.find(x=>x.id==='companion');
+      if(comp){comp.certable=true;comp.certs=comp.certs||[];if(!comp.certs.some(k=>k.expires==='2027-02-13'))comp.certs.push({id:uid(),expires:'2027-02-13',added:'2026-11-09'})}
+      if(at.goal){at.goal.short=at.goal.short||'Companion Fare spend';if(!at.goal.updated||at.goal.updated<='2026-11-09'){at.goal.spent=4755;at.goal.updated='2026-11-09'}}
+    }
     try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
   }
   if(!state.added.includes('earn-cats-v1')){
@@ -455,7 +470,9 @@ function render(){
   const t=today(), yr=cardYear(c), fee=Number(c.annualFee)||0;
   const net=yr.got-fee, scale=Math.max(fee,yr.max,1);
   const due=c.credits.filter(x=>PER_YEAR[x.period]).map(x=>{const p=periodOf(x.period,t);const r=x.amount-used(c,x.id,p.start,p.end);return {x,r,d:daysLeft(p.end),p}})
-    .filter(o=>o.r>0&&o.d<=(o.x.period==='monthly'?10:30)).sort((a,b)=>a.d-b.d);
+    .filter(o=>o.r>0&&o.d<=(o.x.period==='monthly'?10:30));
+  c.credits.forEach(x=>openCerts(x).forEach(k=>{const d=daysLeft(parseD(k.expires))-1;if(d<=60)due.push({x,d,cert:true})}));
+  due.sort((a,b)=>a.d-b.d);
 
   app.innerHTML=`
   ${topBar()}
@@ -490,7 +507,7 @@ function render(){
   </section>
 
   ${due.length?`<section class="due"><h2>Use soon</h2>${due.map(o=>`
-    <div class="due-row"><span><b>${esc(o.x.name)}</b> · ${money(o.r)} left</span><span class="num" style="font-size:13px">${o.d===1?'last day':o.d+' days'}</span></div>`).join('')}</section>`:''}
+    <div class="due-row"><span><b>${esc(o.x.name)}</b> · ${o.cert?'certificate expires':money(o.r)+' left'}</span><span class="num" style="font-size:13px">${o.d===1?'last day':o.d+' days'}</span></div>`).join('')}</section>`:''}
 
   <section class="sec"><h2>Credits</h2><div class="list">
     ${c.credits.map(x=>creditRow(c,x,t)).join('')||'<p class="empty">No credits on this card.</p>'}
@@ -524,6 +541,13 @@ function creditRow(c,x,t){
     const active=again&&again>t;
     return `<div class="credit"><div class="c-head"><div><div class="c-name">${esc(x.name)} <span class="c-amt">· up to ${money(x.amount)}</span></div><div class="c-note">${esc(x.note||'')}</div></div>${active?`<span class="pill done">Used ${MONTHS[parseD(last.date).getMonth()]} ${parseD(last.date).getFullYear()}</span>`:`<span class="pill open">Available</span>`}</div>
       <div class="c-foot"><span class="c-amt">${active?`Eligible again around ${MONTHS[again.getMonth()]} ${again.getFullYear()}`:last?'Eligible again now':'Nothing logged. If you used it before, log it with that date.'}</span><button class="log-btn" data-act="log" data-id="${esc(x.id)}">Log</button></div></div>`;
+  }
+  if(x.certable){
+    const oc=openCerts(x), p=periodOf('annual',t), u=used(c,x.id,p.start,p.end);
+    const d=oc.length?daysLeft(parseD(oc[0].expires)):0;
+    return `<div class="credit"><div class="c-head"><div><div class="c-name">${esc(x.name)}</div><div class="c-note">${esc(x.note||'')}</div></div>${oc.length?`<span class="pill ${d<=60?'open':'done'}">${oc.length} available</span>`:`<span class="pill stay">None available</span>`}</div>
+      ${oc.map(k=>`<div class="cert"><span>Certificate expires <b>${fmtDate(k.expires)}</b> <span class="c-amt">(${daysLeft(parseD(k.expires))-1} days left)</span></span><button class="x" aria-label="Remove certificate" data-act="delcert" data-cid="${esc(x.id)}" data-id="${esc(k.id)}">×</button></div>`).join('')}
+      <div class="c-foot"><button class="linkish" data-act="addcert" data-id="${esc(x.id)}">+ Add certificate</button><span class="c-amt">${u?`Saved ${money(u)} this year`:''}</span><button class="log-btn" data-act="log" data-id="${esc(x.id)}">Log use</button></div></div>`;
   }
   if(x.period==='perUse'){
     const p=periodOf('annual',t),u=used(c,x.id,p.start,p.end),n=c.logs.filter(l=>l.creditId===x.id&&l.date.startsWith(String(t.getFullYear()))).length;
@@ -565,14 +589,18 @@ function logSheet(cid){
     <form id="f-log" class="sheet-in" style="gap:12px">
       <div class="row"><label>Amount ($)<input id="log-amt" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${pre}"></label>
       <label>Date<input id="log-date" type="date" required value="${ymd(t)}"></label></div>
-      <label>Note (optional)<input id="log-note" type="text" placeholder="e.g. Grubhub order"></label>
+      <label>Note (optional)<input id="log-note" type="text" placeholder="${x.certable?'e.g. SEA to Kauai, March':'e.g. Grubhub order'}"></label>
+      ${x.certable&&openCerts(x).length?`<label style="flex-direction:row;align-items:center;gap:8px;color:var(--ink)"><input id="log-cert" type="checkbox" checked style="width:auto"> Mark the certificate expiring ${fmtDate(openCerts(x)[0].expires)} as used</label>`:''}
       <div class="actions"><button type="button" class="ghost" data-act="close">Cancel</button><button class="primary">Save</button></div>
     </form>`,s=>{
       s.querySelectorAll('[data-q]').forEach(b=>b.onclick=()=>{s.querySelector('#log-amt').value=b.dataset.q});
       s.querySelector('#f-log').onsubmit=e=>{e.preventDefault();
         const amt=parseFloat(s.querySelector('#log-amt').value),date=s.querySelector('#log-date').value;
         if(!(amt>0)||!date) return;
-        c.logs.push({id:uid(),creditId:x.id,amount:Math.round(amt*100)/100,date,note:s.querySelector('#log-note').value.trim()});
+        const entry={id:uid(),creditId:x.id,amount:Math.round(amt*100)/100,date,note:s.querySelector('#log-note').value.trim()};
+        const cb=s.querySelector('#log-cert');
+        if(cb&&cb.checked){const k=openCerts(x)[0];k.used=true;k.usedOn=date;entry.certId=k.id}
+        c.logs.push(entry);
         closeSheet();persist();render();toast('Logged '+money(amt)+' '+x.name);
       };
     });
@@ -592,6 +620,15 @@ function goalBlock(c,yr){
     <div class="bar"><i style="width:${f*100}%;background:${f>=1?'var(--good)':'var(--brass)'}"></i></div>
     <div class="c-amt num">${money(g.spent||0)} of ${money(g.target)}</div>
   </div>`;
+}
+function certSheet(cid){
+  const c=card(), x=c.credits.find(k=>k.id===cid);
+  openSheet(`<h3>Add ${esc(x.name)} certificate</h3><div class="hint">Find the expiration date in your Alaska account under Wallet / Certificates.</div>
+    <form id="f-cert" class="sheet-in" style="gap:12px"><label>Expires on<input id="ce-exp" type="date" required></label>
+    <div class="actions"><button type="button" class="ghost" data-act="close">Cancel</button><button class="primary">Add</button></div></form>`,s=>{
+    s.querySelector('#f-cert').onsubmit=e=>{e.preventDefault();const v=s.querySelector('#ce-exp').value;if(!v)return;
+      x.certs=x.certs||[];x.certs.push({id:uid(),expires:v,added:ymd(today())});closeSheet();persist();render();toast('Certificate added')};
+  });
 }
 function goalSheet(){
   const c=card(), g=c.goal;
@@ -673,6 +710,12 @@ document.addEventListener('click',e=>{
   if(a==='log') return logSheet(b.dataset.id);
   if(a==='points') return pointsSheet();
   if(a==='goal') return goalSheet();
+  if(a==='addcert') return certSheet(b.dataset.id);
+  if(a==='delcert'){
+    if(b.dataset.armed){const x=card().credits.find(k=>k.id===b.dataset.cid);x.certs=x.certs.filter(k=>k.id!==b.dataset.id);persist();render();toast('Certificate removed');return}
+    b.dataset.armed='1';b.textContent='Remove?';b.style.color='var(--warn)';b.style.fontSize='13px';
+    setTimeout(()=>{if(b.isConnected){delete b.dataset.armed;b.textContent='×';b.style.cssText=''}},3000);return;
+  }
   if(a==='edit') return editSheet(false);
   if(a==='addcard') return addChooser();
   if(a==='addblank'){closeSheet();return editSheet(true)}
@@ -680,7 +723,9 @@ document.addEventListener('click',e=>{
   if(a==='export') return exportData();
   if(a==='import') return document.getElementById('import-file').click();
   if(a==='dellog'){
-    if(b.dataset.armed){const c=card();c.logs=c.logs.filter(l=>l.id!==b.dataset.id);persist();render();toast('Entry deleted');return}
+    if(b.dataset.armed){const c=card();const l=c.logs.find(l=>l.id===b.dataset.id);
+      if(l&&l.certId)c.credits.forEach(x=>(x.certs||[]).forEach(k=>{if(k.id===l.certId){k.used=false;delete k.usedOn}}));
+      c.logs=c.logs.filter(l=>l.id!==b.dataset.id);persist();render();toast('Entry deleted');return}
     b.dataset.armed='1';b.textContent='Delete?';b.style.color='var(--warn)';b.style.fontSize='13px';
     setTimeout(()=>{if(b.isConnected){delete b.dataset.armed;b.textContent='×';b.style.cssText=''}},3000);
   }
