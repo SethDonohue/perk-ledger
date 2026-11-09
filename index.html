@@ -139,7 +139,7 @@ textarea{min-height:90px;font-size:14px}
 const LS_KEY='perk-ledger-v1';
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const PER_YEAR={monthly:12,semiannual:2,annual:1};
-const PERIOD_LABEL={monthly:'Monthly',semiannual:'Every 6 months',annual:'Yearly',perStay:'Per stay'};
+const PERIOD_LABEL={monthly:'Monthly',semiannual:'Every 6 months',annual:'Yearly',perStay:'Per stay',every4y:'Every 4 years'};
 
 function uid(){return Math.random().toString(36).slice(2,10)}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -171,10 +171,44 @@ function amexGold(){
     ],
     logs:[]};
 }
-function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()]}}
+function capOneVenture(){
+  return {id:'cap1-venture',name:'Capital One Venture',issuer:'Capital One',annualFee:95,feeDate:'2026-09-01',pointsUnit:'miles',points:0,pointsUpdated:null,since:ymd(today()),
+    credits:[
+      {id:'global-entry',name:'Global Entry / TSA PreCheck',amount:120,period:'every4y',note:'Application fee credit once every 4 years. Pay the fee with this card.'},
+      {id:'lifestyle',name:'Lifestyle Collection credit',amount:50,period:'perStay',note:'$50 experience credit per stay at Lifestyle Collection hotels and vacation rentals booked through Capital One Travel.'}
+    ],
+    earn:[
+      {rate:'5x',label:'Hotels, vacation rentals, rental cars',note:'Booked through Capital One Travel'},
+      {rate:'5x',label:'Capital One Entertainment',note:'Tickets bought through Capital One Entertainment'},
+      {rate:'2x',label:'Everything else',note:'Unlimited, no caps'}
+    ],
+    perks:[
+      {name:'Hertz Five Star status',note:'Enroll through the Capital One website or app. Enrolling at Hertz directly doesn\u2019t count.'},
+      {name:'Transfer miles to travel partners',note:'15+ airline and hotel programs, mostly 1:1 (e.g. Air France-KLM, British Airways, Singapore, Wyndham).'},
+      {name:'Erase travel purchases',note:'Redeem miles against any travel charge on the card.'},
+      {name:'No foreign transaction fees',note:''},
+      {name:'Lifestyle Collection hotel perks',note:'WiFi, room upgrades when available and the $50 credit above.'},
+      {name:'Travel and purchase protection',note:'Rental car coverage, trip cancellation/interruption, lost luggage, extended warranty. Terms vary by card network; check your guide to benefits.'},
+      {name:'Capital One Lounges (paid)',note:'$45 per visit. The 2 free visits a year ended January 1, 2025.'}
+    ],
+    logs:[]};
+}
+const CATALOG=[{key:'cap1-venture',name:'Capital One Venture',make:capOneVenture},{key:'amex-gold',name:'Amex Gold',make:amexGold}];
+function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto']}}
 
 let state=null, syncNote='Saved on this phone', sheet=null;
 try{const raw=localStorage.getItem(LS_KEY); if(raw) state=JSON.parse(raw)}catch(e){}
+/* One-time additions shipped with app updates. */
+function migrate(){
+  if(!state||!Array.isArray(state.cards)) return;
+  state.added=state.added||[];
+  if(!state.added.includes('cap1-venture-auto')){
+    state.added.push('cap1-venture-auto');
+    if(!state.cards.some(c=>c.id==='cap1-venture')) state.cards.push(capOneVenture());
+    try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
+  }
+}
+migrate();
 if(!state||!Array.isArray(state.cards)) state=defaultState();
 
 /* ---------- persistence (this phone) ---------- */
@@ -302,12 +336,12 @@ function render(){
     </div>
     <div class="stats">
       <div class="stat"><span>${net>=0?'Ahead of fee':'To offset fee'}</span><b style="color:${net>=0?'var(--good)':'var(--warn)'}">${money(Math.abs(net))}</b></div>
-      <div class="stat"><span>Still available</span><b>${money(yr.left)}</b></div>
-      <div class="stat"><span>Max this ${yr.w.byFee?'fee year':'year'}</span><b>${money(yr.max)}</b></div>
+      ${yr.max?`<div class="stat"><span>Still available</span><b>${money(yr.left)}</b></div>
+      <div class="stat"><span>Max this ${yr.w.byFee?'fee year':'year'}</span><b>${money(yr.max)}</b></div>`:`<div class="stat" style="grid-column:span 2"><span>No monthly or yearly credits on this card. Log per-use credits as you get them.</span></div>`}
     </div>
     <div class="points">
-      <div><div class="num">${Number(c.points||0).toLocaleString()} pts</div><small>${c.pointsUpdated?'Updated '+fmtDate(c.pointsUpdated):'Not entered yet'}</small></div>
-      <button class="ghost" data-act="points">Update points</button>
+      <div><div class="num">${Number(c.points||0).toLocaleString()} ${esc(c.pointsUnit||'pts')}</div><small>${c.pointsUpdated?'Updated '+fmtDate(c.pointsUpdated):'Not entered yet'}</small></div>
+      <button class="ghost" data-act="points">Update ${c.pointsUnit==='miles'?'miles':'points'}</button>
     </div>
   </section>
 
@@ -340,6 +374,13 @@ function render(){
   renderFoot();
 }
 function creditRow(c,x,t){
+  if(x.period==='every4y'){
+    const last=c.logs.filter(l=>l.creditId===x.id).sort((a,b)=>b.date.localeCompare(a.date))[0];
+    const again=last?(()=>{const d=parseD(last.date);return new Date(d.getFullYear()+4,d.getMonth(),d.getDate())})():null;
+    const active=again&&again>t;
+    return `<div class="credit"><div class="c-head"><div><div class="c-name">${esc(x.name)} <span class="c-amt">· up to ${money(x.amount)}</span></div><div class="c-note">${esc(x.note||'')}</div></div>${active?`<span class="pill done">Used ${MONTHS[parseD(last.date).getMonth()]} ${parseD(last.date).getFullYear()}</span>`:`<span class="pill open">Available</span>`}</div>
+      <div class="c-foot"><span class="c-amt">${active?`Eligible again around ${MONTHS[again.getMonth()]} ${again.getFullYear()}`:last?'Eligible again now':'Nothing logged. If you used it before, log it with that date.'}</span><button class="log-btn" data-act="log" data-id="${esc(x.id)}">Log</button></div></div>`;
+  }
   if(x.period==='perStay'){
     const p=periodOf('annual',t),u=used(c,x.id,p.start,p.end),n=c.logs.filter(l=>l.creditId===x.id&&l.date.startsWith(String(t.getFullYear()))).length;
     return `<div class="credit"><div class="c-head"><div><div class="c-name">${esc(x.name)}</div><div class="c-note">${esc(x.note||'')}</div></div><span class="pill stay">Up to ${money(x.amount)}/stay</span></div>
@@ -370,7 +411,7 @@ function logSheet(cid){
   const pre=r>0?r:x.amount;
   const quick=[...new Set([pre,x.amount, x.amount>=20?Math.round(x.amount/2):null].filter(v=>v&&v>0))];
   openSheet(`<h3>Log ${esc(x.name)}</h3>
-    <div class="hint">${PER_YEAR[x.period]?`${money(r)} left this period`:'Enter the credit you received for this stay'}</div>
+    <div class="hint">${PER_YEAR[x.period]?`${money(r)} left this period`:x.period==='every4y'?'Set the date to when the fee credit posted, even if it was years ago':'Enter the credit you received for this stay'}</div>
     <div class="quick">${quick.map(v=>`<button type="button" data-q="${v}">${money(v)}</button>`).join('')}</div>
     <form id="f-log" class="sheet-in" style="gap:12px">
       <div class="row"><label>Amount ($)<input id="log-amt" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${pre}"></label>
@@ -387,10 +428,16 @@ function logSheet(cid){
       };
     });
 }
+function addChooser(){
+  openSheet(`<h3>Add a card</h3><div class="hint">Start from a card with its benefits filled in, or build your own.</div>
+    <div class="list">${CATALOG.map(t=>`<button class="ghost" style="text-align:left;padding:12px 14px" data-act="addtpl" data-key="${t.key}">${esc(t.name)}${state.cards.some(c=>c.id===t.key)?' <span class="hint">(already added)</span>':''}</button>`).join('')}
+    <button class="ghost" style="text-align:left;padding:12px 14px" data-act="addblank">Blank card</button></div>
+    <div class="actions"><button type="button" class="ghost" data-act="close">Cancel</button></div>`);
+}
 function pointsSheet(){
   const c=card();
-  openSheet(`<h3>Points balance</h3><form id="f-pts" class="sheet-in" style="gap:12px">
-    <label>Membership Rewards points<input id="pts" type="number" inputmode="numeric" min="0" step="1" value="${Number(c.points||0)}"></label>
+  openSheet(`<h3>${c.pointsUnit==='miles'?'Miles':'Points'} balance</h3><form id="f-pts" class="sheet-in" style="gap:12px">
+    <label>${esc(c.name)} ${c.pointsUnit==='miles'?'miles':'points'}<input id="pts" type="number" inputmode="numeric" min="0" step="1" value="${Number(c.points||0)}"></label>
     <div class="actions"><button type="button" class="ghost" data-act="close">Cancel</button><button class="primary">Save</button></div></form>`,s=>{
     s.querySelector('#f-pts').onsubmit=e=>{e.preventDefault();c.points=Math.max(0,parseInt(s.querySelector('#pts').value||'0',10));c.pointsUpdated=ymd(today());closeSheet();persist();render();toast('Points updated')};
   });
@@ -455,7 +502,9 @@ document.addEventListener('click',e=>{
   if(a==='log') return logSheet(b.dataset.id);
   if(a==='points') return pointsSheet();
   if(a==='edit') return editSheet(false);
-  if(a==='addcard') return editSheet(true);
+  if(a==='addcard') return addChooser();
+  if(a==='addblank'){closeSheet();return editSheet(true)}
+  if(a==='addtpl'){const t=CATALOG.find(k=>k.key===b.dataset.key);const n=t.make();if(state.cards.some(k=>k.id===n.id))n.id=n.id+'-'+uid();n.feeDate=null;state.cards.push(n);state.selected=n.id;closeSheet();persist();render();toast(n.name+' added. Tap Edit to set the fee date.');return}
   if(a==='export') return exportData();
   if(a==='import') return document.getElementById('import-file').click();
   if(a==='dellog'){
