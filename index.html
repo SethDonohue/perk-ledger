@@ -137,6 +137,10 @@ textarea{min-height:90px;font-size:14px}
 .rank-n{min-width:0;font-weight:500}
 .rank-n small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
 .rank-v{font-size:13px}
+.goal{display:flex;flex-direction:column;gap:8px;border-top:1px solid var(--line);padding-top:14px}
+.goal-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.goal-head span{min-width:0}
+.goal-head small{display:block;color:var(--muted);font-size:12px}
 .backup{display:flex;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
 .backup p{margin:0;color:var(--muted);font-size:13px}
 .backup .actions{justify-content:flex-start}
@@ -152,7 +156,7 @@ textarea{min-height:90px;font-size:14px}
 const LS_KEY='perk-ledger-v1';
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 const PER_YEAR={monthly:12,semiannual:2,annual:1};
-const PERIOD_LABEL={monthly:'Monthly',semiannual:'Every 6 months',annual:'Yearly',perStay:'Per stay',every4y:'Every 4 years'};
+const PERIOD_LABEL={monthly:'Monthly',semiannual:'Every 6 months',annual:'Yearly',perStay:'Per stay',every4y:'Every 4 years',perUse:'Per use (log savings)'};
 
 function uid(){return Math.random().toString(36).slice(2,10)}
 function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
@@ -210,15 +214,18 @@ function capOneVenture(){
 const CATS=[
   {id:'dining',name:'Restaurants, takeout & delivery',hint:'Includes Dunkin\u2019, Resy restaurants, Grubhub'},
   {id:'groceries',name:'Groceries',hint:'US supermarkets. Not Costco, Walmart or Target'},
-  {id:'flights',name:'Flights',hint:'Booked with the airline or a card\u2019s travel site'},
+  {id:'gas',name:'Gas & EV charging',hint:'Diesel included'},
+  {id:'alaska',name:'Alaska & Hawaiian Airlines',hint:'Flights and purchases with the airlines',parent:'flights'},
+  {id:'flights',name:'Other airlines',hint:'Booked with the airline or a card\u2019s travel site'},
   {id:'hotel-amex',name:'Hotel via Amex Travel',hint:'Prepaid at amextravel.com'},
   {id:'hotel-c1',name:'Hotel or rental via Capital One Travel',hint:'Hotels and vacation rentals'},
   {id:'hotel',name:'Hotel booked directly',hint:'On the hotel\u2019s own site or at the desk'},
   {id:'car-c1',name:'Rental car via Capital One Travel',hint:''},
   {id:'car',name:'Rental car booked directly',hint:'Hertz, Enterprise, etc.'},
   {id:'rides',name:'Uber, Lyft & rides',hint:'Uber Eats counts here for Uber Cash'},
+  {id:'streaming',name:'Cable & streaming',hint:'Netflix, Spotify, cable and the like'},
   {id:'tickets-c1',name:'Tickets via Capital One Entertainment',hint:'Concerts, sports, shows'},
-  {id:'other',name:'Everything else',hint:'Gas, shopping, bills, tickets bought elsewhere'}
+  {id:'other',name:'Everything else',hint:'Shopping, Costco, bills, tickets bought elsewhere'}
 ];
 const CREDIT_CATS={dining:['dining'],resy:['dining'],dunkin:['dining'],uber:['rides','dining'],hotel:['hotel-amex'],lifestyle:['hotel-c1']};
 function guessCats(e){
@@ -229,15 +236,18 @@ function guessCats(e){
   if(/hotel/.test(t)) c.push(/amex ?travel/.test(t)?'hotel-amex':/capital one travel/.test(t)?'hotel-c1':'hotel');
   if(/rental car|car rental/.test(t)) c.push(/capital one travel/.test(t)?'car-c1':'car');
   if(/uber|lyft|rideshare|transit/.test(t)) c.push('rides');
+  if(/\bgas\b|fuel|ev charging/.test(t)) c.push('gas');
+  if(/streaming|cable/.test(t)) c.push('streaming');
   if(/everything|all other|all purchases|every purchase/.test(t)) c.push('other');
   return c;
 }
 function rateNum(r){const m=String(r).match(/[\d.]+/);return m?parseFloat(m[0]):0}
 function cardRate(card,cat){
   let best=null,fallback=null;
+  const parent=(CATS.find(k=>k.id===cat)||{}).parent;
   (card.earn||[]).forEach(e=>{
     const cats=e.cats||guessCats(e), r=rateNum(e.rate);
-    if(cats.includes(cat)&&(!best||r>best.r)) best={r,e};
+    if((cats.includes(cat)||(parent&&cats.includes(parent)))&&(!best||r>best.r)) best={r,e};
     if(cats.includes('other')&&(!fallback||r>fallback.r)) fallback={r,e};
   });
   return best||fallback||{r:1,e:null};
@@ -248,14 +258,19 @@ function openCredits(cat){
     const cats=x.cats||CREDIT_CATS[x.id]||[]; if(!cats.includes(cat)) return;
     if(PER_YEAR[x.period]){const p=periodOf(x.period,t);const r=x.amount-used(card,x.id,p.start,p.end);if(r>0)out.push({card,x,txt:`${money(r)} left in ${p.label}`})}
     else if(x.period==='perStay') out.push({card,x,txt:`up to ${money(x.amount)} per stay`});
+    else if(x.period==='perUse'&&x.tip) out.push({card,x,txt:x.tip});
   }));
   return out;
 }
 function renderBest(){
   const cards=state.cards;
   const rows=CATS.map(cat=>{
-    const ranked=cards.map(card=>{const r=cardRate(card,cat.id);const pv=Number(card.pointValue??1);return {card,r:r.r,e:r.e,val:r.r*pv}}).sort((a,b)=>b.val-a.val);
-    const top=ranked[0], tie=ranked.length>1&&ranked[1].val===top.val;
+    const ranked=cards.map(card=>{const r=cardRate(card,cat.id);const pv=Number(card.pointValue??1);
+      const perk=card.credits.some(x=>(x.cats||CREDIT_CATS[x.id]||[]).includes(cat.id));
+      const goal=!!(card.goal&&(card.goal.spent||0)<card.goal.target);
+      return {card,r:r.r,e:r.e,val:r.r*pv,perk,goal}}).sort((a,b)=>b.val-a.val||(b.perk-a.perk)||(b.goal-a.goal));
+    const top=ranked[0], same=ranked.length>1&&ranked[1].val===top.val, tie=same&&ranked[1].perk===top.perk&&ranked[1].goal===top.goal;
+    const why=same&&!tie?(top.perk!==ranked[1].perk?`${esc(top.card.name)}\u2019s benefits above make it the better pick`:`spending on ${esc(top.card.name)} also counts toward the ${money(top.card.goal.target)} ${esc(top.card.goal.short||'spending goal')} (${money(top.card.goal.target-(top.card.goal.spent||0))} to go)`):'';
     const credits=openCredits(cat.id);
     return `<div class="credit best">
       <div class="c-head"><div><div class="c-name">${esc(cat.name)}</div>${cat.hint?`<div class="c-note">${esc(cat.hint)}</div>`:''}</div></div>
@@ -264,7 +279,7 @@ function renderBest(){
         <span class="rank-x num">${o.r}x</span>
         <span class="rank-n">${esc(o.card.name)}${o.e&&o.e.note&&/\$[\d,]+/.test(o.e.note)&&i===0?`<small>${esc(o.e.note)}</small>`:''}</span>
         <span class="rank-v num">${(o.val).toFixed(1)}%</span></div>`).join('')}</div>
-      ${tie?'<div class="c-amt">Tie. Either card earns the same here.</div>':''}
+      ${tie?'<div class="c-amt">Tie. These cards earn the same here.</div>':same?`<div class="c-amt">Same rate as ${esc(ranked[1].card.name)}, but ${why}.</div>`:''}
     </div>`;
   }).join('');
   const vals=cards.map(c=>`${esc(c.name)} ${c.pointsUnit||'points'} at ${Number(c.pointValue??1)}\u00a2`).join(', ');
@@ -281,8 +296,33 @@ function topBar(){
   return `<div class="top"><h1>Perk Ledger</h1></div>
   <div class="seg" role="tablist"><button role="tab" aria-selected="${v==='cards'}" data-act="view" data-v="cards">My cards</button><button role="tab" aria-selected="${v==='best'}" data-act="view" data-v="best">Best card</button></div>`;
 }
-const CATALOG=[{key:'cap1-venture',name:'Capital One Venture',make:capOneVenture},{key:'amex-gold',name:'Amex Gold',make:amexGold}];
-function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto','earn-cats-v1']}}
+function atmosAscent(){
+  return {id:'atmos-ascent',name:'Atmos Ascent',issuer:'Bank of America',annualFee:95,feeDate:null,pointsUnit:'points',points:0,pointsUpdated:null,since:ymd(today()),
+    goal:{label:'Spend for next Companion Fare',short:'Companion Fare spend',target:6000,spent:0,updated:null,note:'Spend $6,000+ in a card year and the $99 Companion Fare arrives on your account anniversary.'},
+    credits:[
+      {id:'companion',name:'$99 Companion Fare',amount:0,period:'perUse',cats:['alaska'],tip:'$99 + taxes for a companion, if you have one available',note:'Bring a companion for $99 + taxes (from $23) on Alaska or Hawaiian flights within North America, booked on alaskaair.com. Log what it saved you.'},
+      {id:'bags',name:'Free checked bags',amount:0,period:'perUse',cats:['alaska'],tip:'first checked bag free for you and up to 6 others when you pay with this card',note:'First bag free for you and up to 6 others on the same reservation when you pay with this card. Log the savings (about $35+ per bag each way).'},
+      {id:'inflight',name:'20% back on inflight purchases',amount:0,period:'perUse',cats:['alaska'],tip:'20% back on food and drinks on board',note:'Food, drinks and Wi-Fi bought on board Alaska and Hawaiian. Log the 20% you got back.'}
+    ],
+    earn:[
+      {rate:'3x',label:'Alaska and Hawaiian Airlines',note:'Flights and other eligible airline purchases',cats:['alaska']},
+      {rate:'2x',label:'Gas and EV charging',note:'Diesel included',cats:['gas']},
+      {rate:'2x',label:'Local transit and rideshare',note:'Uber, Lyft, buses, trains',cats:['rides']},
+      {rate:'2x',label:'Cable and streaming',note:'',cats:['streaming']},
+      {rate:'1x',label:'Everything else',note:'10% points bonus with an eligible Bank of America account',cats:['other']}
+    ],
+    perks:[
+      {name:'Preferred boarding',note:'On Alaska and Hawaiian flights.'},
+      {name:'Status points',note:'1 status point for every $3 spent, no cap.'},
+      {name:'Alaska Lounge+ discount',note:'$100 off an annual Alaska Lounge+ membership. No free lounge access.'},
+      {name:'oneworld and partner airlines',note:'Earn and redeem Atmos points on oneworld and 30+ partner airlines.'},
+      {name:'No foreign transaction fees',note:''},
+      {name:'Limited travel protection',note:'No trip cancellation, lost luggage or purchase protection on this card. Book big trips on a card that has it.'}
+    ],
+    logs:[]};
+}
+const CATALOG=[{key:'atmos-ascent',name:'Atmos Rewards Ascent',make:atmosAscent},{key:'cap1-venture',name:'Capital One Venture',make:capOneVenture},{key:'amex-gold',name:'Amex Gold',make:amexGold}];
+function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto','earn-cats-v1','atmos-auto']}}
 
 let state=null, syncNote='Saved on this phone', sheet=null;
 try{const raw=localStorage.getItem(LS_KEY); if(raw) state=JSON.parse(raw)}catch(e){}
@@ -293,6 +333,11 @@ function migrate(){
   if(!state.added.includes('cap1-venture-auto')){
     state.added.push('cap1-venture-auto');
     if(!state.cards.some(c=>c.id==='cap1-venture')) state.cards.push(capOneVenture());
+    try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
+  }
+  if(!state.added.includes('atmos-auto')){
+    state.added.push('atmos-auto');
+    if(!state.cards.some(c=>c.id==='atmos-ascent')) state.cards.push(atmosAscent());
     try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
   }
   if(!state.added.includes('earn-cats-v1')){
@@ -437,6 +482,7 @@ function render(){
       ${yr.max?`<div class="stat"><span>Still available</span><b>${money(yr.left)}</b></div>
       <div class="stat"><span>Max this ${yr.w.byFee?'fee year':'year'}</span><b>${money(yr.max)}</b></div>`:`<div class="stat" style="grid-column:span 2"><span>No monthly or yearly credits on this card. Log per-use credits as you get them.</span></div>`}
     </div>
+    ${c.goal?goalBlock(c,yr):''}
     <div class="points">
       <div><div class="num">${Number(c.points||0).toLocaleString()} ${esc(c.pointsUnit||'pts')}</div><small>${c.pointsUpdated?'Updated '+fmtDate(c.pointsUpdated):'Not entered yet'}</small></div>
       <button class="ghost" data-act="points">Update ${c.pointsUnit==='miles'?'miles':'points'}</button>
@@ -479,6 +525,11 @@ function creditRow(c,x,t){
     return `<div class="credit"><div class="c-head"><div><div class="c-name">${esc(x.name)} <span class="c-amt">· up to ${money(x.amount)}</span></div><div class="c-note">${esc(x.note||'')}</div></div>${active?`<span class="pill done">Used ${MONTHS[parseD(last.date).getMonth()]} ${parseD(last.date).getFullYear()}</span>`:`<span class="pill open">Available</span>`}</div>
       <div class="c-foot"><span class="c-amt">${active?`Eligible again around ${MONTHS[again.getMonth()]} ${again.getFullYear()}`:last?'Eligible again now':'Nothing logged. If you used it before, log it with that date.'}</span><button class="log-btn" data-act="log" data-id="${esc(x.id)}">Log</button></div></div>`;
   }
+  if(x.period==='perUse'){
+    const p=periodOf('annual',t),u=used(c,x.id,p.start,p.end),n=c.logs.filter(l=>l.creditId===x.id&&l.date.startsWith(String(t.getFullYear()))).length;
+    return `<div class="credit"><div class="c-head"><div><div class="c-name">${esc(x.name)}</div><div class="c-note">${esc(x.note||'')}</div></div><span class="pill stay">Log savings</span></div>
+      <div class="c-foot"><span class="c-amt">${n?`Used ${n}\u00d7 · saved ${money(u)} this year`:'Nothing logged this year'}</span><button class="log-btn" data-act="log" data-id="${esc(x.id)}">Log</button></div></div>`;
+  }
   if(x.period==='perStay'){
     const p=periodOf('annual',t),u=used(c,x.id,p.start,p.end),n=c.logs.filter(l=>l.creditId===x.id&&l.date.startsWith(String(t.getFullYear()))).length;
     return `<div class="credit"><div class="c-head"><div><div class="c-name">${esc(x.name)}</div><div class="c-note">${esc(x.note||'')}</div></div><span class="pill stay">Up to ${money(x.amount)}/stay</span></div>
@@ -506,10 +557,10 @@ function logSheet(cid){
   const c=card(),x=c.credits.find(k=>k.id===cid),t=today();
   let r=x.amount;
   if(PER_YEAR[x.period]){const p=periodOf(x.period,t);r=Math.max(0,x.amount-used(c,x.id,p.start,p.end))}
-  const pre=r>0?r:x.amount;
+  const pre=r>0?r:(x.amount||'');
   const quick=[...new Set([pre,x.amount, x.amount>=20?Math.round(x.amount/2):null].filter(v=>v&&v>0))];
   openSheet(`<h3>Log ${esc(x.name)}</h3>
-    <div class="hint">${PER_YEAR[x.period]?`${money(r)} left this period`:x.period==='every4y'?'Set the date to when the fee credit posted, even if it was years ago':'Enter the credit you received for this stay'}</div>
+    <div class="hint">${PER_YEAR[x.period]?`${money(r)} left this period`:x.period==='every4y'?'Set the date to when the fee credit posted, even if it was years ago':x.period==='perUse'?'Enter about how much this saved you':'Enter the credit you received for this stay'}</div>
     <div class="quick">${quick.map(v=>`<button type="button" data-q="${v}">${money(v)}</button>`).join('')}</div>
     <form id="f-log" class="sheet-in" style="gap:12px">
       <div class="row"><label>Amount ($)<input id="log-amt" type="number" inputmode="decimal" step="0.01" min="0.01" required value="${pre}"></label>
@@ -531,6 +582,25 @@ function addChooser(){
     <div class="list">${CATALOG.map(t=>`<button class="ghost" style="text-align:left;padding:12px 14px" data-act="addtpl" data-key="${t.key}">${esc(t.name)}${state.cards.some(c=>c.id===t.key)?' <span class="hint">(already added)</span>':''}</button>`).join('')}
     <button class="ghost" style="text-align:left;padding:12px 14px" data-act="addblank">Blank card</button></div>
     <div class="actions"><button type="button" class="ghost" data-act="close">Cancel</button></div>`);
+}
+function goalBlock(c,yr){
+  const g=c.goal, f=Math.min(1,(g.spent||0)/g.target), left=Math.max(0,g.target-(g.spent||0));
+  const by=yr.w.byFee?` by ${fmtDate(ymd(yr.w.next))}`:'';
+  return `<div class="goal">
+    <div class="goal-head"><span><b>${esc(g.label)}</b><small>${left?`${money(left)} to go${by}`:'Goal reached. The fare arrives on your anniversary.'}${g.updated?' · updated '+fmtDate(g.updated):''}</small></span>
+      <button class="ghost" data-act="goal">Update spend</button></div>
+    <div class="bar"><i style="width:${f*100}%;background:${f>=1?'var(--good)':'var(--brass)'}"></i></div>
+    <div class="c-amt num">${money(g.spent||0)} of ${money(g.target)}</div>
+  </div>`;
+}
+function goalSheet(){
+  const c=card(), g=c.goal;
+  openSheet(`<h3>Spending this card year</h3><div class="hint">${esc(g.note||'')} Copy the total from your Bank of America app (purchases since your last anniversary).</div>
+    <form id="f-goal" class="sheet-in" style="gap:12px">
+    <label>Spent so far ($)<input id="gs" type="number" inputmode="decimal" min="0" step="0.01" value="${g.spent||0}"></label>
+    <div class="actions"><button type="button" class="ghost" data-act="close">Cancel</button><button class="primary">Save</button></div></form>`,s=>{
+    s.querySelector('#f-goal').onsubmit=e=>{e.preventDefault();g.spent=Math.max(0,parseFloat(s.querySelector('#gs').value)||0);g.updated=ymd(today());closeSheet();persist();render();toast('Spending updated')};
+  });
 }
 function pointsSheet(){
   const c=card();
@@ -585,7 +655,7 @@ function editSheet(isNew){
       c.credits=[...box.querySelectorAll('.crow')].map(r=>{
         const g=k=>r.querySelector(`[data-k="${k}"]`).value;
         return {id:r.dataset.cid||uid(),name:g('name').trim(),amount:Math.max(0,parseFloat(g('amount'))||0),period:g('period'),note:g('note').trim()};
-      }).filter(x=>x.name&&x.amount>0);
+      }).filter(x=>x.name&&(x.amount>0||x.period==='perUse')).map(x=>{const old=c.credits.find(o=>o.id===x.id);if(old){if(old.cats)x.cats=old.cats;if(old.tip)x.tip=old.tip}return x});
       c.earn=s.querySelector('#ce').value.split('\n').map(l=>l.split('|').map(p=>p.trim())).filter(p=>p[0]).map(p=>{const o={rate:p[0],label:p[1]||'',note:p.slice(2).join(' | ')};const old=(c.earn||[]).find(e=>e.rate===o.rate&&e.label===o.label);o.cats=old&&old.cats?old.cats:guessCats(o);return o});
       c.perks=s.querySelector('#cp').value.split('\n').map(l=>l.split('|').map(p=>p.trim())).filter(p=>p[0]).map(p=>({name:p[0],note:p.slice(1).join(' | ')}));
       if(isNew){state.cards.push(c);state.selected=c.id}
@@ -602,6 +672,7 @@ document.addEventListener('click',e=>{
   if(a==='pick'){state.selected=b.dataset.id;persist();render();return}
   if(a==='log') return logSheet(b.dataset.id);
   if(a==='points') return pointsSheet();
+  if(a==='goal') return goalSheet();
   if(a==='edit') return editSheet(false);
   if(a==='addcard') return addChooser();
   if(a==='addblank'){closeSheet();return editSheet(true)}
