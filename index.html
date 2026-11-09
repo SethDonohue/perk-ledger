@@ -143,13 +143,17 @@ textarea{min-height:90px;font-size:14px}
 .goal-head small{display:block;color:var(--muted);font-size:12px}
 .cert{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--bg);border-radius:10px;padding:6px 6px 6px 12px;font-size:14px}
 .cert .x{background:none;border:0;color:var(--muted);font-size:18px;padding:4px 8px}
-.guide{display:grid;gap:10px}
-.g-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
-.g-name{font-family:var(--f-display);font-weight:700;font-size:18px}
-.g-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column}
-.g-list li{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line)}
-.g-list li:last-child{border-bottom:0}
-.g-list b{color:var(--brass);font-weight:500}
+.g-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:6px 16px 12px;display:flex;flex-direction:column}
+.g-row{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:10px 0;border-bottom:1px solid var(--line)}
+.g-group{border-bottom:0;padding-bottom:0}
+.g-sub{padding-left:14px}
+.g-sub .g-what{color:var(--muted);font-size:14px}
+.g-what{font-weight:600;min-width:0}
+.g-pick{text-align:right;min-width:0}
+.g-pick b{font-weight:600}
+.g-x{color:var(--brass);margin-left:4px}
+.g-pick small{display:block;color:var(--muted);font-size:12px}
+.g-card .c-note{padding-top:10px}
 .backup{display:flex;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
 .backup p{margin:0;color:var(--muted);font-size:13px}
 .backup .actions{justify-content:flex-start}
@@ -274,24 +278,42 @@ function openCredits(cat){
   }));
   return out;
 }
-function rankCat(cat){
-  const ranked=state.cards.map(card=>{const r=cardRate(card,cat.id);const pv=Number(card.pointValue??1);
+function rankCat(cat,filter){
+  const ranked=state.cards.filter(filter||(()=>true)).map(card=>{const r=cardRate(card,cat.id);const pv=Number(card.pointValue??1);
     const perk=card.credits.some(x=>(x.cats||CREDIT_CATS[x.id]||[]).includes(cat.id));
     const goal=!!(card.goal&&(card.goal.spent||0)<card.goal.target);
     return {card,r:r.r,e:r.e,val:r.r*pv,perk,goal}}).sort((a,b)=>b.val-a.val||(b.perk-a.perk)||(b.goal-a.goal));
-  const top=ranked[0], same=ranked.length>1&&ranked[1].val===top.val, tie=same&&ranked[1].perk===top.perk&&ranked[1].goal===top.goal;
+  const top=ranked[0];
+  if(!top) return {ranked,top:null,same:false,tie:false,winners:[]};
+  const same=ranked.length>1&&ranked[1].val===top.val, tie=same&&ranked[1].perk===top.perk&&ranked[1].goal===top.goal;
   return {ranked,top,same,tie,winners:tie?ranked.filter(o=>o.val===top.val&&o.perk===top.perk&&o.goal===top.goal):[top]};
 }
-function quickGuide(cats){
-  const byCard=new Map(state.cards.map(c=>[c.id,[]]));
-  cats.forEach(cat=>{const k=rankCat(cat);k.winners.forEach(o=>byCard.get(o.card.id).push({cat,r:o.r,tie:k.tie}))});
-  return `<section class="sec"><h2>Quick guide</h2><div class="guide">${state.cards.map(card=>{
-    const uses=byCard.get(card.id);
-    const creds=card.credits.filter(x=>PER_YEAR[x.period]||x.certable).map(x=>x.name);
-    return `<div class="g-card"><div class="g-name">${esc(card.name)}</div>
-      ${uses.length?`<ol class="g-list">${uses.map(u=>`<li><span>${esc(u.cat.short||u.cat.name)}${u.tie?' <span class="c-amt">(tie)</span>':''}</span><b class="num">${u.r}x</b></li>`).join('')}</ol>`:'<p class="c-note" style="margin:0">Not the best pick for any purchase right now.</p>'}
-      ${creds.length?`<div class="c-note">Use these credits too: ${esc(creds.join(', '))}</div>`:''}
-    </div>`}).join('')}</div></section>`;
+/* Everyday purchases for the Quick guide, most common first. */
+const notAmex=c=>!/american express|amex/i.test((c.issuer||'')+' '+c.name);
+const GUIDE=[
+  {label:'Restaurants & takeout',parts:[{cat:'dining'}]},
+  {label:'Groceries',parts:[{sub:'Costco',cat:'other',filter:notAmex,note:'Costco only takes Visa'},{sub:'Other grocery stores',cat:'groceries'}]},
+  {label:'Gas & diesel',parts:[{cat:'gas'}]},
+  {label:'Uber & Lyft',parts:[{cat:'rides'}]},
+  {label:'Flights',parts:[{sub:'Alaska & Hawaiian',cat:'alaska'},{sub:'Other airlines',cat:'flights'}]},
+  {label:'Streaming',parts:[{cat:'streaming'}]},
+  {label:'Everything else',parts:[{cat:'other'}]}
+];
+function guidePick(part){
+  const cat=CATS.find(c=>c.id===part.cat); if(!cat) return '';
+  const k=rankCat(cat,part.filter); if(!k.top) return '';
+  const names=k.winners.map(o=>esc(o.card.name)).join(' or ');
+  const first=openCredits(part.cat).filter(o=>PER_YEAR[o.x.period]&&(part.cat!=='dining'));
+  return `<span class="g-pick"><b>${names}</b> <span class="num g-x">${k.top.r}x</span>${first.length?`<small>${first.map(o=>esc(o.x.name)).join(', ')} first</small>`:''}${part.note?`<small>${esc(part.note)}</small>`:''}</span>`;
+}
+function quickGuide(){
+  const dining=openCredits('dining').filter(o=>PER_YEAR[o.x.period]&&o.x.id!=='uber');
+  return `<section class="sec"><h2>Quick guide</h2><div class="g-card">
+    ${GUIDE.map(g=>g.parts.length===1&&!g.parts[0].sub
+      ?`<div class="g-row"><span class="g-what">${esc(g.label)}</span>${guidePick(g.parts[0])}</div>`
+      :`<div class="g-row g-group"><span class="g-what">${esc(g.label)}</span></div>${g.parts.map(pt=>`<div class="g-row g-sub"><span class="g-what">${esc(pt.sub)}</span>${guidePick(pt)}</div>`).join('')}`).join('')}
+    ${dining.length?`<div class="c-note">Open dining credits: ${dining.map(o=>`${esc(o.x.name)} (${o.txt.replace(/ left in .*/,' left')})`).join(', ')}</div>`:''}
+  </div></section>`;
 }
 function renderBest(){
   const cats=CATS.slice().sort((a,b)=>(a.common||99)-(b.common||99));
@@ -311,7 +333,7 @@ function renderBest(){
   }).join('');
   const vals=state.cards.map(c=>`${esc(c.name)} ${c.pointsUnit||'points'} at ${Number(c.pointValue??1)}\u00a2`).join(', ');
   app.innerHTML=`${topBar()}
-  ${quickGuide(cats)}
+  ${quickGuide()}
   <section class="sec"><h2>Details by purchase</h2>
     <p class="c-note" style="margin:0">Best card is on top for each kind of purchase. The % is your return per dollar, valuing ${vals}. Change a card\u2019s point value in Edit.</p>
     <div class="list">${rows}</div>
