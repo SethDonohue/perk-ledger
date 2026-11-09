@@ -124,6 +124,19 @@ textarea{min-height:90px;font-size:14px}
 @media (max-width:420px){.crow{grid-template-columns:1fr 64px;}.crow select{grid-column:1}.stats{gap:6px}.big{font-size:26px}}
 @media (prefers-reduced-motion:no-preference){.bar i{transition:width .4s ease}}
 .linkish{background:none;border:0;padding:0;color:var(--brass);font-weight:600;text-decoration:underline;text-underline-offset:2px;font-size:inherit}
+.seg{display:grid;grid-template-columns:1fr 1fr;background:var(--empty);border-radius:12px;padding:3px;gap:3px}
+.seg button{border:0;background:none;border-radius:9px;padding:9px;font-weight:600;color:var(--muted)}
+.seg button[aria-selected="true"]{background:var(--surface);color:var(--ink);box-shadow:0 1px 2px rgba(0,0,0,.12)}
+.use-first{background:var(--good-soft);color:var(--ink);border-radius:10px;padding:8px 10px;font-size:13px}
+.use-first b{color:var(--good)}
+.rank{display:flex;flex-direction:column;gap:2px}
+.rank-row{display:grid;grid-template-columns:44px 1fr auto;gap:10px;align-items:baseline;padding:6px 8px;border-radius:8px;color:var(--muted)}
+.rank-row.win{background:var(--brass-soft);color:var(--ink)}
+.rank-row.win .rank-x{color:var(--brass)}
+.rank-x{font-family:var(--f-display);font-weight:700;font-size:18px}
+.rank-n{min-width:0;font-weight:500}
+.rank-n small{display:block;font-weight:400;font-size:12px;color:var(--muted)}
+.rank-v{font-size:13px}
 .backup{display:flex;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
 .backup p{margin:0;color:var(--muted);font-size:13px}
 .backup .actions{justify-content:flex-start}
@@ -158,12 +171,12 @@ function amexGold(){
       {id:'hotel',name:'Hotel Collection credit',amount:100,period:'perStay',note:'$100 on-site experiential credit with 2+ consecutive nights booked through Amex Travel.'}
     ],
     earn:[
-      {rate:'5x',label:'Prepaid hotels',note:'Booked at amextravel.com or the Amex Travel app'},
-      {rate:'4x',label:'Restaurants worldwide',note:'Incl. US takeout and delivery. First $50,000 per calendar year, then 1x'},
-      {rate:'4x',label:'US supermarkets',note:'First $25,000 per calendar year, then 1x'},
-      {rate:'3x',label:'Flights',note:'Booked directly with airlines or amextravel.com. No charter or private jets'},
-      {rate:'2x',label:'Other prepaid Amex Travel',note:'Eligible prepaid purchases on amextravel.com'},
-      {rate:'1x',label:'Everything else',note:''}
+      {rate:'5x',label:'Prepaid hotels',note:'Booked at amextravel.com or the Amex Travel app',cats:['hotel-amex']},
+      {rate:'4x',label:'Restaurants worldwide',note:'Incl. US takeout and delivery. First $50,000 per calendar year, then 1x',cats:['dining']},
+      {rate:'4x',label:'US supermarkets',note:'First $25,000 per calendar year, then 1x',cats:['groceries']},
+      {rate:'3x',label:'Flights',note:'Booked directly with airlines or amextravel.com. No charter or private jets',cats:['flights']},
+      {rate:'2x',label:'Other prepaid Amex Travel',note:'Eligible prepaid purchases on amextravel.com',cats:[]},
+      {rate:'1x',label:'Everything else',note:'',cats:['other']}
     ],
     perks:[
       {name:'Hertz Five Star status',note:'Enrollment required. Register for Hertz Gold Plus Rewards first.'},
@@ -178,9 +191,9 @@ function capOneVenture(){
       {id:'lifestyle',name:'Lifestyle Collection credit',amount:50,period:'perStay',note:'$50 experience credit per stay at Lifestyle Collection hotels and vacation rentals booked through Capital One Travel.'}
     ],
     earn:[
-      {rate:'5x',label:'Hotels, vacation rentals, rental cars',note:'Booked through Capital One Travel'},
-      {rate:'5x',label:'Capital One Entertainment',note:'Tickets bought through Capital One Entertainment'},
-      {rate:'2x',label:'Everything else',note:'Unlimited, no caps'}
+      {rate:'5x',label:'Hotels, vacation rentals, rental cars',note:'Booked through Capital One Travel',cats:['hotel-c1','car-c1']},
+      {rate:'5x',label:'Capital One Entertainment',note:'Tickets bought through Capital One Entertainment',cats:['tickets-c1']},
+      {rate:'2x',label:'Everything else',note:'Unlimited, no caps',cats:['other']}
     ],
     perks:[
       {name:'Hertz Five Star status',note:'Enroll through the Capital One website or app. Enrolling at Hertz directly doesn\u2019t count.'},
@@ -193,8 +206,83 @@ function capOneVenture(){
     ],
     logs:[]};
 }
+/* Spending categories for the Best card tab. Credits list which categories they apply to. */
+const CATS=[
+  {id:'dining',name:'Restaurants, takeout & delivery',hint:'Includes Dunkin\u2019, Resy restaurants, Grubhub'},
+  {id:'groceries',name:'Groceries',hint:'US supermarkets. Not Costco, Walmart or Target'},
+  {id:'flights',name:'Flights',hint:'Booked with the airline or a card\u2019s travel site'},
+  {id:'hotel-amex',name:'Hotel via Amex Travel',hint:'Prepaid at amextravel.com'},
+  {id:'hotel-c1',name:'Hotel or rental via Capital One Travel',hint:'Hotels and vacation rentals'},
+  {id:'hotel',name:'Hotel booked directly',hint:'On the hotel\u2019s own site or at the desk'},
+  {id:'car-c1',name:'Rental car via Capital One Travel',hint:''},
+  {id:'car',name:'Rental car booked directly',hint:'Hertz, Enterprise, etc.'},
+  {id:'rides',name:'Uber, Lyft & rides',hint:'Uber Eats counts here for Uber Cash'},
+  {id:'tickets-c1',name:'Tickets via Capital One Entertainment',hint:'Concerts, sports, shows'},
+  {id:'other',name:'Everything else',hint:'Gas, shopping, bills, tickets bought elsewhere'}
+];
+const CREDIT_CATS={dining:['dining'],resy:['dining'],dunkin:['dining'],uber:['rides','dining'],hotel:['hotel-amex'],lifestyle:['hotel-c1']};
+function guessCats(e){
+  const t=(e.label+' '+(e.note||'')).toLowerCase(), c=[];
+  if(/restaurant|dining/.test(t)) c.push('dining');
+  if(/supermarket|grocer/.test(t)) c.push('groceries');
+  if(/flight|airfare|airline/.test(t)) c.push('flights');
+  if(/hotel/.test(t)) c.push(/amex ?travel/.test(t)?'hotel-amex':/capital one travel/.test(t)?'hotel-c1':'hotel');
+  if(/rental car|car rental/.test(t)) c.push(/capital one travel/.test(t)?'car-c1':'car');
+  if(/uber|lyft|rideshare|transit/.test(t)) c.push('rides');
+  if(/everything|all other|all purchases|every purchase/.test(t)) c.push('other');
+  return c;
+}
+function rateNum(r){const m=String(r).match(/[\d.]+/);return m?parseFloat(m[0]):0}
+function cardRate(card,cat){
+  let best=null,fallback=null;
+  (card.earn||[]).forEach(e=>{
+    const cats=e.cats||guessCats(e), r=rateNum(e.rate);
+    if(cats.includes(cat)&&(!best||r>best.r)) best={r,e};
+    if(cats.includes('other')&&(!fallback||r>fallback.r)) fallback={r,e};
+  });
+  return best||fallback||{r:1,e:null};
+}
+function openCredits(cat){
+  const t=today(), out=[];
+  state.cards.forEach(card=>card.credits.forEach(x=>{
+    const cats=x.cats||CREDIT_CATS[x.id]||[]; if(!cats.includes(cat)) return;
+    if(PER_YEAR[x.period]){const p=periodOf(x.period,t);const r=x.amount-used(card,x.id,p.start,p.end);if(r>0)out.push({card,x,txt:`${money(r)} left in ${p.label}`})}
+    else if(x.period==='perStay') out.push({card,x,txt:`up to ${money(x.amount)} per stay`});
+  }));
+  return out;
+}
+function renderBest(){
+  const cards=state.cards;
+  const rows=CATS.map(cat=>{
+    const ranked=cards.map(card=>{const r=cardRate(card,cat.id);const pv=Number(card.pointValue??1);return {card,r:r.r,e:r.e,val:r.r*pv}}).sort((a,b)=>b.val-a.val);
+    const top=ranked[0], tie=ranked.length>1&&ranked[1].val===top.val;
+    const credits=openCredits(cat.id);
+    return `<div class="credit best">
+      <div class="c-head"><div><div class="c-name">${esc(cat.name)}</div>${cat.hint?`<div class="c-note">${esc(cat.hint)}</div>`:''}</div></div>
+      ${credits.length?`<div class="use-first"><b>Use first:</b> ${credits.map(o=>`${esc(o.x.name)} <span class="c-amt">(${esc(o.card.name)}, ${o.txt})</span>`).join('; ')}</div>`:''}
+      <div class="rank">${ranked.map((o,i)=>`<div class="rank-row${i===0&&!tie?' win':''}">
+        <span class="rank-x num">${o.r}x</span>
+        <span class="rank-n">${esc(o.card.name)}${o.e&&o.e.note&&/\$[\d,]+/.test(o.e.note)&&i===0?`<small>${esc(o.e.note)}</small>`:''}</span>
+        <span class="rank-v num">${(o.val).toFixed(1)}%</span></div>`).join('')}</div>
+      ${tie?'<div class="c-amt">Tie. Either card earns the same here.</div>':''}
+    </div>`;
+  }).join('');
+  const vals=cards.map(c=>`${esc(c.name)} ${c.pointsUnit||'points'} at ${Number(c.pointValue??1)}\u00a2`).join(', ');
+  app.innerHTML=`${topBar()}
+  <section class="sec"><h2>Which card to use</h2>
+    <p class="c-note" style="margin:0">Best card is on top for each kind of purchase. The % is your return per dollar, valuing ${vals}. Change a card\u2019s point value in Edit.</p>
+    <div class="list">${rows}</div>
+  </section>
+  <div class="foot" id="foot"></div>`;
+  renderFoot();
+}
+function topBar(){
+  const v=state.view||'cards';
+  return `<div class="top"><h1>Perk Ledger</h1></div>
+  <div class="seg" role="tablist"><button role="tab" aria-selected="${v==='cards'}" data-act="view" data-v="cards">My cards</button><button role="tab" aria-selected="${v==='best'}" data-act="view" data-v="best">Best card</button></div>`;
+}
 const CATALOG=[{key:'cap1-venture',name:'Capital One Venture',make:capOneVenture},{key:'amex-gold',name:'Amex Gold',make:amexGold}];
-function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto']}}
+function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto','earn-cats-v1']}}
 
 let state=null, syncNote='Saved on this phone', sheet=null;
 try{const raw=localStorage.getItem(LS_KEY); if(raw) state=JSON.parse(raw)}catch(e){}
@@ -205,6 +293,15 @@ function migrate(){
   if(!state.added.includes('cap1-venture-auto')){
     state.added.push('cap1-venture-auto');
     if(!state.cards.some(c=>c.id==='cap1-venture')) state.cards.push(capOneVenture());
+    try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
+  }
+  if(!state.added.includes('earn-cats-v1')){
+    state.added.push('earn-cats-v1');
+    const tpl={'amex-gold':amexGold,'cap1-venture':capOneVenture};
+    state.cards.forEach(c=>{
+      const fresh=tpl[c.id]?tpl[c.id]().earn:null;
+      (c.earn||[]).forEach(e=>{if(!e.cats){const m=fresh&&fresh.find(f=>f.rate===e.rate&&f.label===e.label);e.cats=m?m.cats:guessCats(e)}});
+    });
     try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
   }
 }
@@ -307,6 +404,7 @@ function card(){return state.cards.find(c=>c.id===state.selected)||state.cards[0
 const app=document.getElementById('app'), layer=document.getElementById('layer');
 
 function render(){
+  if(state.view==='best'&&state.cards.length) return renderBest();
   const c=card();
   if(!c){app.innerHTML=`<div class="top"><h1>Perk Ledger</h1></div><p class="empty">No cards yet.</p><button class="primary" data-act="addcard">Add a card</button><div class="foot" id="foot"></div>`;renderFoot();return}
   const t=today(), yr=cardYear(c), fee=Number(c.annualFee)||0;
@@ -315,7 +413,7 @@ function render(){
     .filter(o=>o.r>0&&o.d<=(o.x.period==='monthly'?10:30)).sort((a,b)=>a.d-b.d);
 
   app.innerHTML=`
-  <div class="top"><h1>Perk Ledger</h1></div>
+  ${topBar()}
   <div class="chips" role="tablist">
     ${state.cards.map(k=>`<button class="chip" aria-pressed="${k.id===c.id}" data-act="pick" data-id="${esc(k.id)}">${esc(k.name)}</button>`).join('')}
     <button class="chip add" data-act="addcard">+ Add card</button>
@@ -459,6 +557,7 @@ function editSheet(isNew){
     <label>Card name<input id="cn" required value="${esc(c.name)}" placeholder="e.g. Chase Sapphire Preferred"></label>
     <div class="row"><label>Annual fee ($)<input id="cf" type="number" min="0" step="1" value="${c.annualFee||0}"></label>
     <label>Fee charged on<input id="cfd" type="date" value="${esc(c.feeDate||'')}"></label></div>
+    <label>Value per point or mile (cents)<input id="cpv" type="number" min="0" step="0.05" value="${c.pointValue??1}"></label>
     <div class="hint">The most recent date the annual fee posted. Fee coverage is counted for the 12 months starting that month, and rolls over each year on its own.</div>
     <div class="sec" style="gap:8px"><h2>Credits</h2><div id="crows" class="list" style="gap:14px">${c.credits.map(creditRowHtml).join('')}</div>
       <button type="button" class="ghost" id="addc" style="align-self:flex-start">+ Add credit</button></div>
@@ -482,11 +581,12 @@ function editSheet(isNew){
       c.name=s.querySelector('#cn').value.trim()||'Untitled card';
       c.annualFee=Math.max(0,parseFloat(s.querySelector('#cf').value)||0);
       c.feeDate=s.querySelector('#cfd').value||null;
+      c.pointValue=Math.max(0,parseFloat(s.querySelector('#cpv').value)||0);
       c.credits=[...box.querySelectorAll('.crow')].map(r=>{
         const g=k=>r.querySelector(`[data-k="${k}"]`).value;
         return {id:r.dataset.cid||uid(),name:g('name').trim(),amount:Math.max(0,parseFloat(g('amount'))||0),period:g('period'),note:g('note').trim()};
       }).filter(x=>x.name&&x.amount>0);
-      c.earn=s.querySelector('#ce').value.split('\n').map(l=>l.split('|').map(p=>p.trim())).filter(p=>p[0]).map(p=>({rate:p[0],label:p[1]||'',note:p.slice(2).join(' | ')}));
+      c.earn=s.querySelector('#ce').value.split('\n').map(l=>l.split('|').map(p=>p.trim())).filter(p=>p[0]).map(p=>{const o={rate:p[0],label:p[1]||'',note:p.slice(2).join(' | ')};const old=(c.earn||[]).find(e=>e.rate===o.rate&&e.label===o.label);o.cats=old&&old.cats?old.cats:guessCats(o);return o});
       c.perks=s.querySelector('#cp').value.split('\n').map(l=>l.split('|').map(p=>p.trim())).filter(p=>p[0]).map(p=>({name:p[0],note:p.slice(1).join(' | ')}));
       if(isNew){state.cards.push(c);state.selected=c.id}
       closeSheet();persist();render();toast(isNew?'Card added':'Saved');
@@ -498,6 +598,7 @@ document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]'); if(!b) return;
   const a=b.dataset.act;
   if(a==='close') return closeSheet();
+  if(a==='view'){state.view=b.dataset.v;persist();render();window.scrollTo(0,0);return}
   if(a==='pick'){state.selected=b.dataset.id;persist();render();return}
   if(a==='log') return logSheet(b.dataset.id);
   if(a==='points') return pointsSheet();
