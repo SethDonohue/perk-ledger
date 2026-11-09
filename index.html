@@ -143,6 +143,13 @@ textarea{min-height:90px;font-size:14px}
 .goal-head small{display:block;color:var(--muted);font-size:12px}
 .cert{display:flex;justify-content:space-between;align-items:center;gap:10px;background:var(--bg);border-radius:10px;padding:6px 6px 6px 12px;font-size:14px}
 .cert .x{background:none;border:0;color:var(--muted);font-size:18px;padding:4px 8px}
+.guide{display:grid;gap:10px}
+.g-card{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px;display:flex;flex-direction:column;gap:8px}
+.g-name{font-family:var(--f-display);font-weight:700;font-size:18px}
+.g-list{margin:0;padding:0;list-style:none;display:flex;flex-direction:column}
+.g-list li{display:flex;justify-content:space-between;gap:12px;padding:6px 0;border-bottom:1px solid var(--line)}
+.g-list li:last-child{border-bottom:0}
+.g-list b{color:var(--brass);font-weight:500}
 .backup{display:flex;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
 .backup p{margin:0;color:var(--muted);font-size:13px}
 .backup .actions{justify-content:flex-start}
@@ -214,20 +221,20 @@ function capOneVenture(){
 }
 /* Spending categories for the Best card tab. Credits list which categories they apply to. */
 const CATS=[
-  {id:'dining',name:'Restaurants, takeout & delivery',hint:'Includes Dunkin\u2019, Resy restaurants, Grubhub'},
-  {id:'groceries',name:'Groceries',hint:'US supermarkets. Not Costco, Walmart or Target'},
-  {id:'gas',name:'Gas & EV charging',hint:'Diesel included'},
-  {id:'alaska',name:'Alaska & Hawaiian Airlines',hint:'Flights and purchases with the airlines',parent:'flights'},
-  {id:'flights',name:'Other airlines',hint:'Booked with the airline or a card\u2019s travel site'},
-  {id:'hotel-amex',name:'Hotel via Amex Travel',hint:'Prepaid at amextravel.com'},
-  {id:'hotel-c1',name:'Hotel or rental via Capital One Travel',hint:'Hotels and vacation rentals'},
-  {id:'hotel',name:'Hotel booked directly',hint:'On the hotel\u2019s own site or at the desk'},
-  {id:'car-c1',name:'Rental car via Capital One Travel',hint:''},
-  {id:'car',name:'Rental car booked directly',hint:'Hertz, Enterprise, etc.'},
-  {id:'rides',name:'Uber, Lyft & rides',hint:'Uber Eats counts here for Uber Cash'},
-  {id:'streaming',name:'Cable & streaming',hint:'Netflix, Spotify, cable and the like'},
-  {id:'tickets-c1',name:'Tickets via Capital One Entertainment',hint:'Concerts, sports, shows'},
-  {id:'other',name:'Everything else',hint:'Shopping, Costco, bills, tickets bought elsewhere'}
+  {id:'dining',short:'Restaurants & takeout',common:1,name:'Restaurants, takeout & delivery',hint:'Includes Dunkin\u2019, Resy restaurants, Grubhub'},
+  {id:'groceries',short:'Groceries (not Costco)',common:2,name:'Groceries',hint:'US supermarkets. Not Costco, Walmart or Target'},
+  {id:'gas',short:'Gas & diesel',common:3,name:'Gas & EV charging',hint:'Diesel included'},
+  {id:'alaska',short:'Alaska & Hawaiian flights',common:7,name:'Alaska & Hawaiian Airlines',hint:'Flights and purchases with the airlines',parent:'flights'},
+  {id:'flights',short:'Other airlines',common:8,name:'Other airlines',hint:'Booked with the airline or a card\u2019s travel site'},
+  {id:'hotel-amex',short:'Hotels via Amex Travel',common:11,name:'Hotel via Amex Travel',hint:'Prepaid at amextravel.com'},
+  {id:'hotel-c1',short:'Hotels via Capital One Travel',common:12,name:'Hotel or rental via Capital One Travel',hint:'Hotels and vacation rentals'},
+  {id:'hotel',short:'Hotels booked direct',common:9,name:'Hotel booked directly',hint:'On the hotel\u2019s own site or at the desk'},
+  {id:'car-c1',short:'Rental cars via Capital One Travel',common:13,name:'Rental car via Capital One Travel',hint:''},
+  {id:'car',short:'Rental cars booked direct',common:10,name:'Rental car booked directly',hint:'Hertz, Enterprise, etc.'},
+  {id:'rides',short:'Uber & Lyft',common:5,name:'Uber, Lyft & rides',hint:'Uber Eats counts here for Uber Cash'},
+  {id:'streaming',short:'Streaming & cable',common:6,name:'Cable & streaming',hint:'Netflix, Spotify, cable and the like'},
+  {id:'tickets-c1',short:'Tickets via Capital One Entertainment',common:14,name:'Tickets via Capital One Entertainment',hint:'Concerts, sports, shows'},
+  {id:'other',short:'Everything else, incl. Costco',common:4,name:'Everything else',hint:'Shopping, Costco, bills, tickets bought elsewhere'}
 ];
 const CREDIT_CATS={dining:['dining'],resy:['dining'],dunkin:['dining'],uber:['rides','dining'],hotel:['hotel-amex'],lifestyle:['hotel-c1']};
 function guessCats(e){
@@ -267,14 +274,29 @@ function openCredits(cat){
   }));
   return out;
 }
+function rankCat(cat){
+  const ranked=state.cards.map(card=>{const r=cardRate(card,cat.id);const pv=Number(card.pointValue??1);
+    const perk=card.credits.some(x=>(x.cats||CREDIT_CATS[x.id]||[]).includes(cat.id));
+    const goal=!!(card.goal&&(card.goal.spent||0)<card.goal.target);
+    return {card,r:r.r,e:r.e,val:r.r*pv,perk,goal}}).sort((a,b)=>b.val-a.val||(b.perk-a.perk)||(b.goal-a.goal));
+  const top=ranked[0], same=ranked.length>1&&ranked[1].val===top.val, tie=same&&ranked[1].perk===top.perk&&ranked[1].goal===top.goal;
+  return {ranked,top,same,tie,winners:tie?ranked.filter(o=>o.val===top.val&&o.perk===top.perk&&o.goal===top.goal):[top]};
+}
+function quickGuide(cats){
+  const byCard=new Map(state.cards.map(c=>[c.id,[]]));
+  cats.forEach(cat=>{const k=rankCat(cat);k.winners.forEach(o=>byCard.get(o.card.id).push({cat,r:o.r,tie:k.tie}))});
+  return `<section class="sec"><h2>Quick guide</h2><div class="guide">${state.cards.map(card=>{
+    const uses=byCard.get(card.id);
+    const creds=card.credits.filter(x=>PER_YEAR[x.period]||x.certable).map(x=>x.name);
+    return `<div class="g-card"><div class="g-name">${esc(card.name)}</div>
+      ${uses.length?`<ol class="g-list">${uses.map(u=>`<li><span>${esc(u.cat.short||u.cat.name)}${u.tie?' <span class="c-amt">(tie)</span>':''}</span><b class="num">${u.r}x</b></li>`).join('')}</ol>`:'<p class="c-note" style="margin:0">Not the best pick for any purchase right now.</p>'}
+      ${creds.length?`<div class="c-note">Use these credits too: ${esc(creds.join(', '))}</div>`:''}
+    </div>`}).join('')}</div></section>`;
+}
 function renderBest(){
-  const cards=state.cards;
-  const rows=CATS.map(cat=>{
-    const ranked=cards.map(card=>{const r=cardRate(card,cat.id);const pv=Number(card.pointValue??1);
-      const perk=card.credits.some(x=>(x.cats||CREDIT_CATS[x.id]||[]).includes(cat.id));
-      const goal=!!(card.goal&&(card.goal.spent||0)<card.goal.target);
-      return {card,r:r.r,e:r.e,val:r.r*pv,perk,goal}}).sort((a,b)=>b.val-a.val||(b.perk-a.perk)||(b.goal-a.goal));
-    const top=ranked[0], same=ranked.length>1&&ranked[1].val===top.val, tie=same&&ranked[1].perk===top.perk&&ranked[1].goal===top.goal;
+  const cats=CATS.slice().sort((a,b)=>(a.common||99)-(b.common||99));
+  const rows=cats.map(cat=>{
+    const {ranked,top,same,tie}=rankCat(cat);
     const why=same&&!tie?(top.perk!==ranked[1].perk?`${esc(top.card.name)}\u2019s benefits above make it the better pick`:`spending on ${esc(top.card.name)} also counts toward the ${money(top.card.goal.target)} ${esc(top.card.goal.short||'spending goal')} (${money(top.card.goal.target-(top.card.goal.spent||0))} to go)`):'';
     const credits=openCredits(cat.id);
     return `<div class="credit best">
@@ -287,9 +309,10 @@ function renderBest(){
       ${tie?'<div class="c-amt">Tie. These cards earn the same here.</div>':same?`<div class="c-amt">Same rate as ${esc(ranked[1].card.name)}, but ${why}.</div>`:''}
     </div>`;
   }).join('');
-  const vals=cards.map(c=>`${esc(c.name)} ${c.pointsUnit||'points'} at ${Number(c.pointValue??1)}\u00a2`).join(', ');
+  const vals=state.cards.map(c=>`${esc(c.name)} ${c.pointsUnit||'points'} at ${Number(c.pointValue??1)}\u00a2`).join(', ');
   app.innerHTML=`${topBar()}
-  <section class="sec"><h2>Which card to use</h2>
+  ${quickGuide(cats)}
+  <section class="sec"><h2>Details by purchase</h2>
     <p class="c-note" style="margin:0">Best card is on top for each kind of purchase. The % is your return per dollar, valuing ${vals}. Change a card\u2019s point value in Edit.</p>
     <div class="list">${rows}</div>
   </section>
