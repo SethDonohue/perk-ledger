@@ -398,7 +398,14 @@ if(!state||!Array.isArray(state.cards)) state=defaultState();
 rollGoals();
 
 /* ---------- persistence: this device first, then Firebase when signed in ---------- */
-const FIREBASE_CONFIG=null; // filled in once the Firebase web app is registered
+const FIREBASE_CONFIG={
+  apiKey:"AIzaSyBM6D_B4c036j7VEhcgrQbbd9tZVrzd5XA",
+  authDomain:"perk-ledger-25bf2.firebaseapp.com",
+  projectId:"perk-ledger-25bf2",
+  storageBucket:"perk-ledger-25bf2.firebasestorage.app",
+  messagingSenderId:"378962840961",
+  appId:"1:378962840961:web:b54913e8cbb29d4dd5ec80"
+};
 const FIREBASE_VERSION='10.12.2';
 let fb=null, fbUser=null, pushTimer=null, pendingRemote=null;
 
