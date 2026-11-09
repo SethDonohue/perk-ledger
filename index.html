@@ -123,6 +123,7 @@ textarea{min-height:90px;font-size:14px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:calc(20px + env(safe-area-inset-bottom,0px));background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;z-index:30}
 @media (max-width:420px){.crow{grid-template-columns:1fr 64px;}.crow select{grid-column:1}.stats{gap:6px}.big{font-size:26px}}
 @media (prefers-reduced-motion:no-preference){.bar i{transition:width .4s ease}}
+.linkish{background:none;border:0;padding:0;color:var(--brass);font-weight:600;text-decoration:underline;text-underline-offset:2px;font-size:inherit}
 .backup{display:flex;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
 .backup p{margin:0;color:var(--muted);font-size:13px}
 .backup .actions{justify-content:flex-start}
@@ -222,19 +223,36 @@ function periodOf(kind,d){
 }
 function used(card,cid,s,e){const a=ymd(s),b=ymd(e);return card.logs.filter(l=>l.creditId===cid&&l.date>=a&&l.date<=b).reduce((t,l)=>t+Number(l.amount||0),0)}
 function daysLeft(end){return Math.round((end-today())/864e5)+1}
+/* The fee year runs 12 months from the month the annual fee was charged.
+   Without a fee date it falls back to the calendar year. */
+function feeWindow(card){
+  const t=today();
+  if(card.feeDate){
+    const f=parseD(card.feeDate); let y=f.getFullYear();
+    while(new Date(y+1,f.getMonth(),1)<=t) y++;
+    while(new Date(y,f.getMonth(),1)>t) y--;
+    const start=new Date(y,f.getMonth(),1), end=new Date(y+1,f.getMonth(),0);
+    const next=new Date(y+1,f.getMonth(),Math.min(f.getDate(),new Date(y+1,f.getMonth()+1,0).getDate()));
+    return {start,end,next,label:MONTHS[start.getMonth()]+' '+start.getFullYear()+' \u2013 '+MONTHS[end.getMonth()]+' '+end.getFullYear(),byFee:true};
+  }
+  const y=t.getFullYear();
+  return {start:new Date(y,0,1),end:new Date(y,11,31),next:null,label:String(y),byFee:false};
+}
 function cardYear(card){
-  const t=today(),y=t.getFullYear(),ys=new Date(y,0,1),ye=new Date(y,11,31);
-  const got=card.logs.filter(l=>l.date>=ymd(ys)&&l.date<=ymd(ye)).reduce((s,l)=>s+Number(l.amount||0),0);
+  const t=today(), w=feeWindow(card), a=ymd(w.start), b=ymd(w.end);
+  const got=card.logs.filter(l=>l.date>=a&&l.date<=b).reduce((s,l)=>s+Number(l.amount||0),0);
   let left=0,max=0;
   card.credits.forEach(c=>{
-    const n=PER_YEAR[c.period]; if(!n) return;
-    max+=c.amount*n;
-    const p=periodOf(c.period,t);
-    left+=Math.max(0,c.amount-used(card,c.id,p.start,p.end));
-    const per=12/n, idx=Math.floor(t.getMonth()/per);
-    left+=c.amount*(n-1-idx);
+    if(!PER_YEAR[c.period]) return;
+    let p=periodOf(c.period,w.start);
+    while(p.start<=w.end){
+      max+=c.amount;
+      if(p.start>t) left+=c.amount;
+      else if(p.end>=t) left+=Math.max(0,c.amount-used(card,c.id,p.start,p.end));
+      p=periodOf(c.period,new Date(p.end.getFullYear(),p.end.getMonth(),p.end.getDate()+1));
+    }
   });
-  return {got,left,max,year:y};
+  return {got,left,max,w};
 }
 function cells(card,c){
   const t=today(),y=t.getFullYear(),n=PER_YEAR[c.period]; if(!n) return '';
@@ -271,11 +289,12 @@ function render(){
 
   <section class="hero">
     <div class="hero-head">
-      <div><h3>${esc(c.name)}</h3><div class="sub">${money(fee)} annual fee · credits reset by calendar year</div></div>
+      <div><h3>${esc(c.name)}</h3><div class="sub">${money(fee)} annual fee${c.feeDate?` · charged ${fmtDate(c.feeDate)}`:''}</div>
+        <div class="sub">${yr.w.byFee?`Fee year ${yr.w.label} · next fee ${fmtDate(ymd(yr.w.next))} (${daysLeft(yr.w.next)-1} days)`:`<button class="linkish" data-act="edit">Add the date your fee was charged</button> to track by fee year`}</div></div>
       <button class="ghost" data-act="edit">Edit</button>
     </div>
     <div>
-      <div class="big num">${money(yr.got)} <span style="font-size:15px;color:var(--muted);font-family:var(--f-body)">back in ${yr.year}</span></div>
+      <div class="big num">${money(yr.got)} <span style="font-size:15px;color:var(--muted);font-family:var(--f-body)">back ${yr.w.byFee?'this fee year':'in '+yr.w.label}</span></div>
       <div class="bar" style="margin-top:10px" role="img" aria-label="${money(yr.got)} used of ${money(scale)} possible; fee ${money(fee)}">
         <i style="width:${Math.min(100,yr.got/scale*100)}%"></i>
         ${fee?`<span class="fee" style="left:calc(${Math.min(100,fee/scale*100)}% - 1px)" title="Annual fee"></span>`:''}
@@ -284,7 +303,7 @@ function render(){
     <div class="stats">
       <div class="stat"><span>${net>=0?'Ahead of fee':'To offset fee'}</span><b style="color:${net>=0?'var(--good)':'var(--warn)'}">${money(Math.abs(net))}</b></div>
       <div class="stat"><span>Still available</span><b>${money(yr.left)}</b></div>
-      <div class="stat"><span>Max credits/yr</span><b>${money(yr.max)}</b></div>
+      <div class="stat"><span>Max this ${yr.w.byFee?'fee year':'year'}</span><b>${money(yr.max)}</b></div>
     </div>
     <div class="points">
       <div><div class="num">${Number(c.points||0).toLocaleString()} pts</div><small>${c.pointsUpdated?'Updated '+fmtDate(c.pointsUpdated):'Not entered yet'}</small></div>
@@ -390,8 +409,10 @@ function editSheet(isNew){
   let armed=false;
   openSheet(`<h3>${isNew?'Add a card':'Edit '+esc(c.name)}</h3>
   <form id="f-card" class="sheet-in" style="gap:14px">
-    <div class="row"><label>Card name<input id="cn" required value="${esc(c.name)}" placeholder="e.g. Chase Sapphire Preferred"></label>
-    <label style="flex:0 0 110px">Annual fee ($)<input id="cf" type="number" min="0" step="1" value="${c.annualFee||0}"></label></div>
+    <label>Card name<input id="cn" required value="${esc(c.name)}" placeholder="e.g. Chase Sapphire Preferred"></label>
+    <div class="row"><label>Annual fee ($)<input id="cf" type="number" min="0" step="1" value="${c.annualFee||0}"></label>
+    <label>Fee charged on<input id="cfd" type="date" value="${esc(c.feeDate||'')}"></label></div>
+    <div class="hint">The most recent date the annual fee posted. Fee coverage is counted for the 12 months starting that month, and rolls over each year on its own.</div>
     <div class="sec" style="gap:8px"><h2>Credits</h2><div id="crows" class="list" style="gap:14px">${c.credits.map(creditRowHtml).join('')}</div>
       <button type="button" class="ghost" id="addc" style="align-self:flex-start">+ Add credit</button></div>
     <label>Earning rates, one per line: rate | category | details
@@ -413,6 +434,7 @@ function editSheet(isNew){
     s.querySelector('#f-card').onsubmit=e=>{e.preventDefault();
       c.name=s.querySelector('#cn').value.trim()||'Untitled card';
       c.annualFee=Math.max(0,parseFloat(s.querySelector('#cf').value)||0);
+      c.feeDate=s.querySelector('#cfd').value||null;
       c.credits=[...box.querySelectorAll('.crow')].map(r=>{
         const g=k=>r.querySelector(`[data-k="${k}"]`).value;
         return {id:r.dataset.cid||uid(),name:g('name').trim(),amount:Math.max(0,parseFloat(g('amount'))||0),period:g('period'),note:g('note').trim()};
