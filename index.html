@@ -327,11 +327,32 @@ function atmosAscent(){
     logs:[]};
 }
 const CATALOG=[{key:'atmos-ascent',name:'Atmos Rewards Ascent',make:atmosAscent},{key:'cap1-venture',name:'Capital One Venture',make:capOneVenture},{key:'amex-gold',name:'Amex Gold',make:amexGold}];
-function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto','earn-cats-v1','atmos-auto','atmos-companion-2027']}}
+function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto','earn-cats-v1','atmos-auto','atmos-companion-2027','atmos-dates-2026']}}
 
 let state=null, syncNote='Saved on this phone', sheet=null;
 try{const raw=localStorage.getItem(LS_KEY); if(raw) state=JSON.parse(raw)}catch(e){}
 /* One-time additions shipped with app updates. */
+/* A spending goal runs a year from its own start date (e.g. the card's offer/anniversary date). */
+function goalWindow(g){
+  if(!g||!g.start) return null;
+  const a=parseD(g.start), t=today(); let y=t.getFullYear();
+  const at=yy=>new Date(yy,a.getMonth(),Math.min(a.getDate(),new Date(yy,a.getMonth()+1,0).getDate()));
+  while(at(y)>t) y--;
+  while(at(y+1)<=t) y++;
+  const start=at(y), next=at(y+1), end=new Date(next.getFullYear(),next.getMonth(),next.getDate()-1);
+  return {start,end,next};
+}
+/* When a goal year ends, start the new one at $0. */
+function rollGoals(){
+  if(!state||!Array.isArray(state.cards)) return;
+  let changed=false;
+  state.cards.forEach(c=>{const w=goalWindow(c.goal);if(!w)return;
+    const ws=ymd(w.start);
+    if(c.goal.windowStart&&c.goal.windowStart!==ws){c.goal.lastYear={start:c.goal.windowStart,spent:c.goal.spent||0};c.goal.spent=0;c.goal.updated=null;changed=true}
+    if(c.goal.windowStart!==ws){c.goal.windowStart=ws;changed=true}
+  });
+  if(changed) try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
+}
 function migrate(){
   if(!state||!Array.isArray(state.cards)) return;
   state.added=state.added||[];
@@ -355,6 +376,12 @@ function migrate(){
     }
     try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
   }
+  if(!state.added.includes('atmos-dates-2026')){
+    state.added.push('atmos-dates-2026');
+    const at=state.cards.find(c=>c.id==='atmos-ascent');
+    if(at){at.feeDate='2026-02-28';if(at.goal){at.goal.start='2026-02-13';at.goal.windowStart='2026-02-13'}}
+    try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
+  }
   if(!state.added.includes('earn-cats-v1')){
     state.added.push('earn-cats-v1');
     const tpl={'amex-gold':amexGold,'cap1-venture':capOneVenture};
@@ -366,7 +393,9 @@ function migrate(){
   }
 }
 migrate();
+rollGoals();
 if(!state||!Array.isArray(state.cards)) state=defaultState();
+rollGoals();
 
 /* ---------- persistence (this phone) ---------- */
 function persist(){
@@ -613,12 +642,13 @@ function addChooser(){
 }
 function goalBlock(c,yr){
   const g=c.goal, f=Math.min(1,(g.spent||0)/g.target), left=Math.max(0,g.target-(g.spent||0));
-  const by=yr.w.byFee?` by ${fmtDate(ymd(yr.w.next))}`:'';
+  const gw=goalWindow(g);
+  const by=gw?` by ${fmtDate(ymd(gw.end))} (${daysLeft(gw.end)-1} days)`:yr.w.byFee?` by ${fmtDate(ymd(yr.w.next))}`:'';
   return `<div class="goal">
     <div class="goal-head"><span><b>${esc(g.label)}</b><small>${left?`${money(left)} to go${by}`:'Goal reached. The fare arrives on your anniversary.'}${g.updated?' · updated '+fmtDate(g.updated):''}</small></span>
       <button class="ghost" data-act="goal">Update spend</button></div>
     <div class="bar"><i style="width:${f*100}%;background:${f>=1?'var(--good)':'var(--brass)'}"></i></div>
-    <div class="c-amt num">${money(g.spent||0)} of ${money(g.target)}</div>
+    <div class="c-amt"><span class="num">${money(g.spent||0)} of ${money(g.target)}</span>${gw?` · spending year ${fmtDate(ymd(gw.start))} \u2013 ${fmtDate(ymd(gw.end))}`:''}${g.lastYear?` · last year ${money(g.lastYear.spent)}`:''}</div>
   </div>`;
 }
 function certSheet(cid){
@@ -664,6 +694,9 @@ function editSheet(isNew){
     <label>Card name<input id="cn" required value="${esc(c.name)}" placeholder="e.g. Chase Sapphire Preferred"></label>
     <div class="row"><label>Annual fee ($)<input id="cf" type="number" min="0" step="1" value="${c.annualFee||0}"></label>
     <label>Fee charged on<input id="cfd" type="date" value="${esc(c.feeDate||'')}"></label></div>
+    ${c.goal?`<div class="row"><label>Spending year starts<input id="cgs" type="date" value="${esc(c.goal.start||'')}"></label>
+    <label>Spending goal ($)<input id="cgt" type="number" min="0" step="1" value="${c.goal.target}"></label></div>
+    <div class="hint">${esc(c.goal.label)}. The spending total resets to $0 when a new spending year starts.</div>`:''}
     <label>Value per point or mile (cents)<input id="cpv" type="number" min="0" step="0.05" value="${c.pointValue??1}"></label>
     <div class="hint">The most recent date the annual fee posted. Fee coverage is counted for the 12 months starting that month, and rolls over each year on its own.</div>
     <div class="sec" style="gap:8px"><h2>Credits</h2><div id="crows" class="list" style="gap:14px">${c.credits.map(creditRowHtml).join('')}</div>
@@ -689,6 +722,8 @@ function editSheet(isNew){
       c.annualFee=Math.max(0,parseFloat(s.querySelector('#cf').value)||0);
       c.feeDate=s.querySelector('#cfd').value||null;
       c.pointValue=Math.max(0,parseFloat(s.querySelector('#cpv').value)||0);
+      if(c.goal){const gs=s.querySelector('#cgs').value||null;if(gs!==c.goal.start){c.goal.start=gs;c.goal.windowStart=gs?ymd(goalWindow(c.goal).start):null}
+        c.goal.target=Math.max(1,parseFloat(s.querySelector('#cgt').value)||c.goal.target)}
       c.credits=[...box.querySelectorAll('.crow')].map(r=>{
         const g=k=>r.querySelector(`[data-k="${k}"]`).value;
         return {id:r.dataset.cid||uid(),name:g('name').trim(),amount:Math.max(0,parseFloat(g('amount'))||0),period:g('period'),note:g('note').trim()};
@@ -735,7 +770,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&sheet)closeSheet()}
 render();
 protectStorage();
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
-window.addEventListener('focus',()=>{if(!sheet)render()});
+window.addEventListener('focus',()=>{if(!sheet){rollGoals();render()}});
 })();
 </script>
 </body>
