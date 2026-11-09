@@ -421,8 +421,10 @@ function persist(){
 function syncable(){const o=JSON.parse(JSON.stringify(state));delete o.view;delete o.selected;return o}
 function schedulePush(){if(!fbUser)return;clearTimeout(pushTimer);pushTimer=setTimeout(pushNow,600)}
 function remoteRef(){return fb.fsM.doc(fb.db,'users',fbUser.uid,'ledger','main')}
-function pushNow(){
+function linkedHere(){try{return localStorage.getItem(LS_KEY+'-uid')===fbUser.uid}catch(e){return false}}
+function pushNow(force){
   if(!fb||!fbUser) return;
+  if(!force&&!linkedHere()) return;
   const body={json:JSON.stringify(syncable()),savedAt:state.savedAt||new Date().toISOString(),device:(navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||''};
   fb.fsM.setDoc(remoteRef(),body).catch(e=>{syncNote='Couldn\u2019t sync ('+(e.code||'error')+'). Saved on this device.';renderFoot()});
 }
@@ -464,7 +466,8 @@ function startSync(){
       /* First sign-in on this device: the account's data wins; an empty account takes this device's data. */
       if(!server) return;
       if(snap.exists()){try{const d=JSON.parse(snap.data().json);state.savedAt=snap.data().savedAt;adopt(Object.assign(d,{savedAt:snap.data().savedAt}))}catch(e){}}
-      else pushNow();
+      else if(state.savedAt) pushNow(true);
+      else {syncNote='Nothing to sync yet. Sign in on the device that has your data first.';renderFoot();return}
       try{localStorage.setItem(linkKey,fbUser.uid)}catch(e){}
       syncNote='Synced as '+(fbUser.email||'Google account');renderFoot();return;
     }
@@ -473,7 +476,7 @@ function startSync(){
     if(rAt>lAt){ try{adopt(JSON.parse(r.json))}catch(e){} }
     else if(lAt>rAt&&server) pushNow();
     if(server){syncNote='Synced'+(fbUser.email?' as '+fbUser.email:'');renderFoot()}
-  },e=>{syncNote='Sync stopped ('+(e.code||'error')+'). Saved on this device.';renderFoot()});
+  },e=>{fb.unsub=null;syncNote='Sync stopped ('+(e.code||'error')+'). Saved on this device. Reopen the app to retry.';renderFoot()});
 }
 async function signIn(){
   if(!fb){toast('Sync isn\u2019t available offline. Try again when you\u2019re online.');return}
@@ -856,7 +859,8 @@ render();
 protectStorage();
 initSync();
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
-window.addEventListener('focus',()=>{if(!sheet){rollGoals();render()}});
+window.addEventListener('focus',()=>{if(!sheet){rollGoals();render()}if(fb&&fbUser&&!fb.unsub)startSync()});
+document.addEventListener('visibilitychange',()=>{if(document.visibilityState==='visible'&&fb&&fbUser&&!fb.unsub)startSync()});
 })();
 </script>
 </body>
