@@ -154,6 +154,14 @@ textarea{min-height:90px;font-size:14px}
 .g-x{color:var(--brass);margin-left:4px}
 .g-pick small{display:block;color:var(--muted);font-size:12px}
 .g-card .c-note{padding-top:10px}
+.tog{flex-direction:row;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);color:var(--ink);font-size:15px;font-weight:400}
+.tog span{min-width:0}
+.tog b{font-weight:500}
+.tog small{display:block;color:var(--muted);font-size:12px}
+.tog input{appearance:none;-webkit-appearance:none;width:44px;height:26px;flex:none;border-radius:13px;background:var(--empty);border:1px solid var(--line);position:relative;cursor:pointer;padding:0;transition:background .15s}
+.tog input::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:var(--surface);box-shadow:0 1px 2px rgba(0,0,0,.25);transition:left .15s}
+.tog input:checked{background:var(--brass);border-color:var(--brass)}
+.tog input:checked::after{left:20px}
 .backup{display:flex;flex-direction:column;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:14px 16px}
 .backup p{margin:0;color:var(--muted);font-size:13px}
 .backup .actions{justify-content:flex-start}
@@ -270,6 +278,7 @@ function openCerts(x){return (x.certs||[]).filter(k=>!k.used&&k.expires>=ymd(tod
 function openCredits(cat){
   const t=today(), out=[];
   state.cards.forEach(card=>card.credits.forEach(x=>{
+    if(x.hidden) return;
     const cats=x.cats||CREDIT_CATS[x.id]||[]; if(!cats.includes(cat)) return;
     if(PER_YEAR[x.period]){const p=periodOf(x.period,t);const r=x.amount-used(card,x.id,p.start,p.end);if(r>0)out.push({card,x,txt:`${money(r)} left in ${p.label}`})}
     else if(x.period==='perStay') out.push({card,x,txt:`up to ${money(x.amount)} per stay`});
@@ -280,7 +289,7 @@ function openCredits(cat){
 }
 function rankCat(cat,filter){
   const ranked=state.cards.filter(filter||(()=>true)).map(card=>{const r=cardRate(card,cat.id);const pv=Number(card.pointValue??1);
-    const perk=card.credits.some(x=>(x.cats||CREDIT_CATS[x.id]||[]).includes(cat.id));
+    const perk=card.credits.some(x=>!x.hidden&&(x.cats||CREDIT_CATS[x.id]||[]).includes(cat.id));
     const goal=!!(card.goal&&(card.goal.spent||0)<card.goal.target);
     return {card,r:r.r,e:r.e,val:r.r*pv,perk,goal}}).sort((a,b)=>b.val-a.val||(b.perk-a.perk)||(b.goal-a.goal));
   const top=ranked[0];
@@ -341,9 +350,31 @@ function renderBest(){
   <div class="foot" id="foot"></div>`;
   renderFoot();
 }
+function hiddenNote(c){
+  const h=c.credits.filter(x=>x.hidden).length+(c.perks||[]).filter(p=>p.hidden).length;
+  return h?`<button class="linkish" style="align-self:flex-start;font-size:13px" data-act="settings">${h} hidden \u00b7 Show or hide benefits</button>`:'';
+}
+function settingsSheet(){
+  const row=(cid,kind,i,name,on,sub)=>`<label class="tog"><span><b>${esc(name)}</b>${sub?`<small>${esc(sub)}</small>`:''}</span>
+    <input type="checkbox" role="switch" data-tog="${kind}" data-cid="${esc(cid)}" data-i="${i}" ${on?'checked':''}></label>`;
+  const what=x=>x.period==='monthly'?money(x.amount)+' a month':x.period==='semiannual'?money(x.amount)+' every 6 months':x.period==='annual'?money(x.amount)+' a year':x.period==='every4y'?'Every 4 years':x.period==='perStay'?'Per stay':'Per use';
+  openSheet(`<h3>Settings</h3>
+    <div class="hint">Turn off benefits you won\u2019t use. Hidden credits drop out of your card screens, reminders, the Best card tab and \u201cStill available.\u201d Anything already logged still counts.</div>
+    ${state.cards.map(c=>`<div class="sec" style="gap:6px"><h2>${esc(c.name)}</h2>
+      ${c.credits.map((x,i)=>row(c.id,'credit',i,x.name,!x.hidden,what(x))).join('')}
+      ${(c.perks||[]).map((p,i)=>row(c.id,'perk',i,p.name,!p.hidden,'Other benefit')).join('')}
+    </div>`).join('')}
+    <div class="actions"><button type="button" class="primary" data-act="close">Done</button></div>`,s=>{
+    s.querySelectorAll('[data-tog]').forEach(cb=>cb.onchange=()=>{
+      const c=state.cards.find(k=>k.id===cb.dataset.cid); const list=cb.dataset.tog==='credit'?c.credits:c.perks; const item=list[+cb.dataset.i];
+      if(cb.checked) delete item.hidden; else item.hidden=true;
+      persist();
+    });
+  });
+}
 function topBar(){
   const v=state.view||'cards';
-  return `<div class="top"><h1>Perk Ledger</h1></div>
+  return `<div class="top"><h1>Perk Ledger</h1><button class="ghost" data-act="settings" aria-label="Settings">Settings</button></div>
   <div class="seg" role="tablist"><button role="tab" aria-selected="${v==='cards'}" data-act="view" data-v="cards">My cards</button><button role="tab" aria-selected="${v==='best'}" data-act="view" data-v="best">Best card</button></div>`;
 }
 function atmosAscent(){
@@ -588,6 +619,7 @@ function cardYear(card){
   const got=card.logs.filter(l=>l.date>=a&&l.date<=b).reduce((s,l)=>s+Number(l.amount||0),0);
   let left=0,max=0;
   card.credits.forEach(c=>{
+    if(c.hidden) return;
     if(!PER_YEAR[c.period]) return;
     let p=periodOf(c.period,w.start);
     while(p.start<=w.end){
@@ -623,9 +655,9 @@ function render(){
   if(!c){app.innerHTML=`<div class="top"><h1>Perk Ledger</h1></div><p class="empty">No cards yet.</p><button class="primary" data-act="addcard">Add a card</button><div class="foot" id="foot"></div>`;renderFoot();return}
   const t=today(), yr=cardYear(c), fee=Number(c.annualFee)||0;
   const net=yr.got-fee, scale=Math.max(fee,yr.max,1);
-  const due=c.credits.filter(x=>PER_YEAR[x.period]).map(x=>{const p=periodOf(x.period,t);const r=x.amount-used(c,x.id,p.start,p.end);return {x,r,d:daysLeft(p.end),p}})
+  const due=c.credits.filter(x=>PER_YEAR[x.period]&&!x.hidden).map(x=>{const p=periodOf(x.period,t);const r=x.amount-used(c,x.id,p.start,p.end);return {x,r,d:daysLeft(p.end),p}})
     .filter(o=>o.r>0&&o.d<=(o.x.period==='monthly'?10:30));
-  c.credits.forEach(x=>openCerts(x).forEach(k=>{const d=daysLeft(parseD(k.expires))-1;if(d<=60)due.push({x,d,cert:true})}));
+  c.credits.filter(x=>!x.hidden).forEach(x=>openCerts(x).forEach(k=>{const d=daysLeft(parseD(k.expires))-1;if(d<=60)due.push({x,d,cert:true})}));
   due.sort((a,b)=>a.d-b.d);
 
   app.innerHTML=`
@@ -664,15 +696,16 @@ function render(){
     <div class="due-row"><span><b>${esc(o.x.name)}</b> · ${o.cert?'certificate expires':money(o.r)+' left'}</span><span class="num" style="font-size:13px">${o.d===1?'last day':o.d+' days'}</span></div>`).join('')}</section>`:''}
 
   <section class="sec"><h2>Credits</h2><div class="list">
-    ${c.credits.map(x=>creditRow(c,x,t)).join('')||'<p class="empty">No credits on this card.</p>'}
+    ${c.credits.filter(x=>!x.hidden).map(x=>creditRow(c,x,t)).join('')||'<p class="empty">No credits shown for this card.</p>'}
+    ${hiddenNote(c)}
   </div></section>
 
   ${c.earn&&c.earn.length?`<section class="sec"><h2>Earning</h2><div class="earn">
     ${c.earn.map(e=>`<div class="x">${esc(e.rate)}</div><div class="t">${esc(e.label)}${e.note?`<small>${esc(e.note)}</small>`:''}</div>`).join('')}
   </div></section>`:''}
 
-  ${c.perks&&c.perks.length?`<section class="sec"><h2>Other benefits</h2><div class="credit" style="gap:0;padding-block:4px">
-    ${c.perks.map(p=>`<div class="perk"><b>${esc(p.name)}</b>${p.note?`<div>${esc(p.note)}</div>`:''}</div>`).join('')}
+  ${c.perks&&c.perks.some(p=>!p.hidden)?`<section class="sec"><h2>Other benefits</h2><div class="credit" style="gap:0;padding-block:4px">
+    ${c.perks.filter(p=>!p.hidden).map(p=>`<div class="perk"><b>${esc(p.name)}</b>${p.note?`<div>${esc(p.note)}</div>`:''}</div>`).join('')}
   </div></section>`:''}
 
   <section class="sec"><h2>History</h2><div class="hist">
@@ -735,7 +768,7 @@ function openSheet(html,onMount){
   sheet=layer.querySelector('.sheet'); onMount&&onMount(sheet);
   const f=sheet.querySelector('input,select,textarea'); if(f) setTimeout(()=>f.focus(),30);
 }
-function closeSheet(){layer.innerHTML='';sheet=null;if(pendingRemote){const d=pendingRemote;pendingRemote=null;adopt(d)}}
+function closeSheet(){const was=sheet;layer.innerHTML='';sheet=null;if(was)render();if(pendingRemote){const d=pendingRemote;pendingRemote=null;adopt(d)}}
 
 function logSheet(cid){
   const c=card(),x=c.credits.find(k=>k.id===cid),t=today();
@@ -858,9 +891,9 @@ function editSheet(isNew){
       c.credits=[...box.querySelectorAll('.crow')].map(r=>{
         const g=k=>r.querySelector(`[data-k="${k}"]`).value;
         return {id:r.dataset.cid||uid(),name:g('name').trim(),amount:Math.max(0,parseFloat(g('amount'))||0),period:g('period'),note:g('note').trim()};
-      }).filter(x=>x.name&&(x.amount>0||x.period==='perUse')).map(x=>{const old=c.credits.find(o=>o.id===x.id);if(old){if(old.cats)x.cats=old.cats;if(old.tip)x.tip=old.tip}return x});
+      }).filter(x=>x.name&&(x.amount>0||x.period==='perUse')).map(x=>{const old=c.credits.find(o=>o.id===x.id);return old?Object.assign({},old,x):x});
       c.earn=s.querySelector('#ce').value.split('\n').map(l=>l.split('|').map(p=>p.trim())).filter(p=>p[0]).map(p=>{const o={rate:p[0],label:p[1]||'',note:p.slice(2).join(' | ')};const old=(c.earn||[]).find(e=>e.rate===o.rate&&e.label===o.label);o.cats=old&&old.cats?old.cats:guessCats(o);return o});
-      c.perks=s.querySelector('#cp').value.split('\n').map(l=>l.split('|').map(p=>p.trim())).filter(p=>p[0]).map(p=>({name:p[0],note:p.slice(1).join(' | ')}));
+      c.perks=s.querySelector('#cp').value.split('\n').map(l=>l.split('|').map(p=>p.trim())).filter(p=>p[0]).map(p=>{const o={name:p[0],note:p.slice(1).join(' | ')};const old=(c.perks||[]).find(k=>k.name===o.name);if(old&&old.hidden)o.hidden=true;return o});
       if(isNew){state.cards.push(c);state.selected=c.id}
       closeSheet();persist();render();toast(isNew?'Card added':'Saved');
     };
@@ -876,6 +909,7 @@ document.addEventListener('click',e=>{
   if(a==='log') return logSheet(b.dataset.id);
   if(a==='points') return pointsSheet();
   if(a==='goal') return goalSheet();
+  if(a==='settings') return settingsSheet();
   if(a==='addcert') return certSheet(b.dataset.id);
   if(a==='delcert'){
     if(b.dataset.armed){const x=card().credits.find(k=>k.id===b.dataset.cid);x.certs=x.certs.filter(k=>k.id!==b.dataset.id);persist();render();toast('Certificate removed');return}

@@ -1,5 +1,5 @@
 // Perk Ledger service worker: app works offline; updates arrive on the next open.
-const VERSION = 'perk-ledger-v12';
+const VERSION = 'perk-ledger-v13';
 const APP_FILES = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png'];
 
 self.addEventListener('install', (e) => {
