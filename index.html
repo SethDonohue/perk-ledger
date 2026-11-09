@@ -397,13 +397,83 @@ rollGoals();
 if(!state||!Array.isArray(state.cards)) state=defaultState();
 rollGoals();
 
-/* ---------- persistence (this phone) ---------- */
+/* ---------- persistence: this device first, then Firebase when signed in ---------- */
+const FIREBASE_CONFIG=null; // filled in once the Firebase web app is registered
+const FIREBASE_VERSION='10.12.2';
+let fb=null, fbUser=null, pushTimer=null, pendingRemote=null;
+
+function saveLocal(){try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}}
 function persist(){
   state.savedAt=new Date().toISOString();
-  try{localStorage.setItem(LS_KEY,JSON.stringify(state));syncNote='Saved on this phone'}
-  catch(e){syncNote='Couldn\u2019t save. Your phone storage may be full.'}
+  try{localStorage.setItem(LS_KEY,JSON.stringify(state));if(!fbUser)syncNote='Saved on this device'}
+  catch(e){syncNote='Couldn\u2019t save. Your storage may be full.'}
+  schedulePush();
   renderFoot();
 }
+/* Which tab and card you're looking at stays per device. */
+function syncable(){const o=JSON.parse(JSON.stringify(state));delete o.view;delete o.selected;return o}
+function schedulePush(){if(!fbUser)return;clearTimeout(pushTimer);pushTimer=setTimeout(pushNow,600)}
+function remoteRef(){return fb.fsM.doc(fb.db,'users',fbUser.uid,'ledger','main')}
+function pushNow(){
+  if(!fb||!fbUser) return;
+  const body={json:JSON.stringify(syncable()),savedAt:state.savedAt||new Date().toISOString(),device:(navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||''};
+  fb.fsM.setDoc(remoteRef(),body).catch(e=>{syncNote='Couldn\u2019t sync ('+(e.code||'error')+'). Saved on this device.';renderFoot()});
+}
+function adopt(data){
+  const keep={view:state.view,selected:state.selected};
+  if(!data||!Array.isArray(data.cards)) return;
+  if(sheet){pendingRemote=data;return}
+  state=Object.assign(data,keep);
+  if(!state.cards.find(c=>c.id===state.selected)) state.selected=state.cards[0]?.id||null;
+  rollGoals(); saveLocal(); render();
+}
+async function initSync(){
+  if(!FIREBASE_CONFIG) return;
+  try{
+    const base='https://www.gstatic.com/firebasejs/'+FIREBASE_VERSION+'/';
+    const [appM,authM,fsM]=await Promise.all([import(base+'firebase-app.js'),import(base+'firebase-auth.js'),import(base+'firebase-firestore.js')]);
+    const app=appM.initializeApp(FIREBASE_CONFIG);
+    const auth=authM.getAuth(app);
+    let db;
+    try{db=fsM.initializeFirestore(app,{localCache:fsM.persistentLocalCache({tabManager:fsM.persistentMultipleTabManager()})})}
+    catch(e){db=fsM.getFirestore(app)}
+    fb={authM,fsM,auth,db,unsub:null};
+    authM.onAuthStateChanged(auth,u=>{
+      if(fb.unsub){fb.unsub();fb.unsub=null}
+      fbUser=u;
+      if(u) startSync(); else {syncNote='Saved on this device';render()}
+    });
+    render();
+  }catch(e){fb=null;syncNote='Saved on this device. Sync loads when you\u2019re online.';renderFoot()}
+}
+function startSync(){
+  syncNote='Syncing\u2026';render();
+  fb.unsub=fb.fsM.onSnapshot(remoteRef(),{includeMetadataChanges:true},snap=>{
+    if(snap.metadata.hasPendingWrites) return;
+    const server=!snap.metadata.fromCache;
+    const linkKey=LS_KEY+'-uid';
+    let linked=null; try{linked=localStorage.getItem(linkKey)}catch(e){}
+    if(linked!==fbUser.uid){
+      /* First sign-in on this device: the account's data wins; an empty account takes this device's data. */
+      if(!server) return;
+      if(snap.exists()){try{const d=JSON.parse(snap.data().json);state.savedAt=snap.data().savedAt;adopt(Object.assign(d,{savedAt:snap.data().savedAt}))}catch(e){}}
+      else pushNow();
+      try{localStorage.setItem(linkKey,fbUser.uid)}catch(e){}
+      syncNote='Synced as '+(fbUser.email||'Google account');renderFoot();return;
+    }
+    if(!snap.exists()){ if(server) pushNow(); return; }
+    const r=snap.data(), rAt=r.savedAt||'', lAt=state.savedAt||'';
+    if(rAt>lAt){ try{adopt(JSON.parse(r.json))}catch(e){} }
+    else if(lAt>rAt&&server) pushNow();
+    if(server){syncNote='Synced'+(fbUser.email?' as '+fbUser.email:'');renderFoot()}
+  },e=>{syncNote='Sync stopped ('+(e.code||'error')+'). Saved on this device.';renderFoot()});
+}
+async function signIn(){
+  if(!fb){toast('Sync isn\u2019t available offline. Try again when you\u2019re online.');return}
+  try{await fb.authM.signInWithPopup(fb.auth,new fb.authM.GoogleAuthProvider())}
+  catch(e){if(e&&e.code!=='auth/popup-closed-by-user'&&e.code!=='auth/cancelled-popup-request')toast('Sign-in didn\u2019t finish ('+(e.code||'error')+')')}
+}
+async function signOutSync(){if(fb){await fb.authM.signOut(fb.auth);toast('Signed out. Your data stays on this device.')}}
 async function protectStorage(){
   try{if(navigator.storage&&navigator.storage.persist&&!(await navigator.storage.persisted())) await navigator.storage.persist()}catch(e){}
 }
@@ -556,8 +626,14 @@ function render(){
       return `<div class="h-row"><span class="d num">${fmtDate(l.date,true)}</span><span class="w">${esc(cr?cr.name:'Removed credit')}${l.note?`<small>${esc(l.note)}</small>`:''}</span><span class="num">${money(l.amount)}</span><button class="x" aria-label="Delete entry" data-act="dellog" data-id="${esc(l.id)}">×</button></div>`}).join('')
       ||'<p class="empty">Nothing logged yet. Tap Log on a credit after you use it.</p>'}
   </div></section>
+  ${FIREBASE_CONFIG?`<section class="sec"><h2>Sync</h2><div class="backup">
+    ${fbUser?`<p>Signed in as <b>${esc(fbUser.email||'Google account')}</b>. Changes sync between every device where you sign in, and save offline until you reconnect.</p>
+      <div class="actions"><button class="ghost" data-act="signout">Sign out</button></div>`
+    :`<p>Sign in with Google to keep this phone and your other browsers in sync. Your data on this device comes with you the first time.</p>
+      <div class="actions"><button class="primary" data-act="signin">Sign in with Google</button></div>`}
+  </div></section>`:''}
   <section class="sec"><h2>Backup</h2><div class="backup">
-    <p>Your data lives only on this phone. Save a backup now and then (to Drive or Files) so you can restore it if you clear Chrome or switch phones.${lastBackup()?' Last backup: '+fmtDate(lastBackup())+'.':' No backup yet.'}</p>
+    <p>${fbUser?'Synced data is also kept in your Firebase account. A backup file is an extra copy you control.':'Your data lives only on this device. Save a backup now and then (to Drive or Files) so you can restore it if you clear Chrome or switch phones.'}${lastBackup()?' Last backup: '+fmtDate(lastBackup())+'.':' No backup yet.'}</p>
     <div class="actions"><button class="ghost" data-act="export">Save backup</button><button class="ghost" data-act="import">Restore from backup</button></div>
   </div></section>
   <div class="foot" id="foot"></div>`;
@@ -604,7 +680,7 @@ function openSheet(html,onMount){
   sheet=layer.querySelector('.sheet'); onMount&&onMount(sheet);
   const f=sheet.querySelector('input,select,textarea'); if(f) setTimeout(()=>f.focus(),30);
 }
-function closeSheet(){layer.innerHTML='';sheet=null}
+function closeSheet(){layer.innerHTML='';sheet=null;if(pendingRemote){const d=pendingRemote;pendingRemote=null;adopt(d)}}
 
 function logSheet(cid){
   const c=card(),x=c.credits.find(k=>k.id===cid),t=today();
@@ -740,8 +816,8 @@ document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]'); if(!b) return;
   const a=b.dataset.act;
   if(a==='close') return closeSheet();
-  if(a==='view'){state.view=b.dataset.v;persist();render();window.scrollTo(0,0);return}
-  if(a==='pick'){state.selected=b.dataset.id;persist();render();return}
+  if(a==='view'){state.view=b.dataset.v;saveLocal();render();window.scrollTo(0,0);return}
+  if(a==='pick'){state.selected=b.dataset.id;saveLocal();render();return}
   if(a==='log') return logSheet(b.dataset.id);
   if(a==='points') return pointsSheet();
   if(a==='goal') return goalSheet();
@@ -756,6 +832,8 @@ document.addEventListener('click',e=>{
   if(a==='addblank'){closeSheet();return editSheet(true)}
   if(a==='addtpl'){const t=CATALOG.find(k=>k.key===b.dataset.key);const n=t.make();if(state.cards.some(k=>k.id===n.id))n.id=n.id+'-'+uid();n.feeDate=null;state.cards.push(n);state.selected=n.id;closeSheet();persist();render();toast(n.name+' added. Tap Edit to set the fee date.');return}
   if(a==='export') return exportData();
+  if(a==='signin') return signIn();
+  if(a==='signout') return signOutSync();
   if(a==='import') return document.getElementById('import-file').click();
   if(a==='dellog'){
     if(b.dataset.armed){const c=card();const l=c.logs.find(l=>l.id===b.dataset.id);
@@ -769,6 +847,7 @@ document.addEventListener('keydown',e=>{if(e.key==='Escape'&&sheet)closeSheet()}
 
 render();
 protectStorage();
+initSync();
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));
 window.addEventListener('focus',()=>{if(!sheet){rollGoals();render()}});
 })();

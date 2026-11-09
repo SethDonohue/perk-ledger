@@ -1,5 +1,5 @@
 // Perk Ledger service worker: app works offline; updates arrive on the next open.
-const VERSION = 'perk-ledger-v7';
+const VERSION = 'perk-ledger-v8';
 const APP_FILES = ['./', './index.html', './manifest.webmanifest', './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png'];
 
 self.addEventListener('install', (e) => {
@@ -30,7 +30,7 @@ self.addEventListener('fetch', (e) => {
   }
 
   // Fonts and app files: serve from cache, fill the cache on first use.
-  if (url.origin === location.origin || url.hostname.endsWith('fonts.googleapis.com') || url.hostname.endsWith('fonts.gstatic.com')) {
+  if (url.origin === location.origin || url.hostname.endsWith('fonts.googleapis.com') || url.hostname.endsWith('fonts.gstatic.com') || url.hostname === 'www.gstatic.com') {
     e.respondWith(
       caches.match(req).then((hit) => hit || fetch(req).then((res) => {
         if (res.ok || res.type === 'opaque') { const copy = res.clone(); caches.open(VERSION).then((c) => c.put(req, copy)); }
