@@ -99,7 +99,7 @@ button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-vis
 .h-row .w small{display:block;color:var(--muted);font-size:12px;overflow-wrap:anywhere}
 .h-row .x{background:none;border:0;color:var(--muted);font-size:18px;padding:4px 8px}
 .empty{color:var(--muted);font-size:14px;padding:6px 0}
-.foot{display:flex;justify-content:space-between;align-items:center;gap:10px;color:var(--muted);font-size:12px}
+.foot{display:flex;justify-content:space-between;align-items:center;gap:10px;color:var(--muted);font-size:12px;overflow-wrap:anywhere;user-select:text}
 .sec{display:flex;flex-direction:column;gap:10px}
 /* sheet */
 .scrim{position:fixed;inset:0;background:rgba(10,12,14,.45);z-index:20}
@@ -426,7 +426,7 @@ function pushNow(force){
   if(!fb||!fbUser) return;
   if(!force&&!linkedHere()) return;
   const body={json:JSON.stringify(syncable()),savedAt:state.savedAt||new Date().toISOString(),device:(navigator.userAgentData&&navigator.userAgentData.platform)||navigator.platform||''};
-  fb.fsM.setDoc(remoteRef(),body).catch(e=>{syncNote='Couldn\u2019t sync ('+(e.code||'error')+'). Saved on this device.';renderFoot()});
+  fb.fsM.setDoc(remoteRef(),body).catch(e=>{syncNote='Couldn\u2019t sync ('+(e.code||'error')+'). Saved on this device. Path users/'+fbUser.uid+'/ledger/main';renderFoot()});
 }
 function adopt(data){
   const keep={view:state.view,selected:state.selected};
@@ -476,7 +476,7 @@ function startSync(){
     if(rAt>lAt){ try{adopt(JSON.parse(r.json))}catch(e){} }
     else if(lAt>rAt&&server) pushNow();
     if(server){syncNote='Synced'+(fbUser.email?' as '+fbUser.email:'');renderFoot()}
-  },e=>{fb.unsub=null;syncNote='Sync stopped ('+(e.code||'error')+'). Saved on this device. Reopen the app to retry.';renderFoot()});
+  },e=>{fb.unsub=null;syncNote='Sync stopped ('+(e.code||'error')+'). Saved on this device. Reopen the app to retry. Details: project '+FIREBASE_CONFIG.projectId+', database (default), path users/'+fbUser.uid+'/ledger/main';renderFoot()});
 }
 async function signIn(){
   if(!fb){toast('Sync isn\u2019t available offline. Try again when you\u2019re online.');return}
