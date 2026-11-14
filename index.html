@@ -850,7 +850,7 @@ function goalSheet(){
   const src=g.once?`Copy the total from your ${esc(g.source||'card app')} (purchases since ${fmtDate(g.start)}).`:'Copy the total from your Bank of America app (purchases since your last anniversary).';
   openSheet(`<h3>${g.once?esc(g.label):'Spending this card year'}</h3><div class="hint">${esc(g.note||'')} ${src}</div>
     <form id="f-goal" class="sheet-in" style="gap:12px">
-    <label>Spent so far ($)<input id="gs" type="number" inputmode="decimal" min="0" step="0.01" value="${g.spent||0}"></label>
+    <label>Spent so far ($)<input id="gs" type="number" inputmode="decimal" min="0" step="0.01" placeholder="0" value="${g.spent||''}"></label>
     ${g.once?`<div class="row"><label>Started<input id="gst" type="date" required value="${esc(g.start)}"></label><label>Deadline<input id="gen" type="date" required value="${esc(g.end)}"></label></div>`:''}
     <div class="actions">${g.once?'<button type="button" class="ghost" id="g-rm">Remove goal</button>':''}<button type="button" class="ghost" data-act="close">Cancel</button><button class="primary">Save</button></div></form>`,s=>{
     s.querySelector('#f-goal').onsubmit=e=>{e.preventDefault();g.spent=Math.max(0,parseFloat(s.querySelector('#gs').value)||0);g.updated=ymd(today());
@@ -863,7 +863,7 @@ function goalSheet(){
 function pointsSheet(){
   const c=card();
   openSheet(`<h3>${c.pointsUnit==='miles'?'Miles':'Points'} balance</h3><form id="f-pts" class="sheet-in" style="gap:12px">
-    <label>${esc(c.name)} ${c.pointsUnit==='miles'?'miles':'points'}<input id="pts" type="number" inputmode="numeric" min="0" step="1" value="${Number(c.points||0)}"></label>
+    <label>${esc(c.name)} ${c.pointsUnit==='miles'?'miles':'points'}<input id="pts" type="number" inputmode="numeric" min="0" step="1" placeholder="0" value="${Number(c.points)||''}"></label>
     <div class="actions"><button type="button" class="ghost" data-act="close">Cancel</button><button class="primary">Save</button></div></form>`,s=>{
     s.querySelector('#f-pts').onsubmit=e=>{e.preventDefault();c.points=Math.max(0,parseInt(s.querySelector('#pts').value||'0',10));c.pointsUpdated=ymd(today());closeSheet();persist();render();toast('Points updated')};
   });
@@ -883,7 +883,7 @@ function editSheet(isNew){
   openSheet(`<h3>${isNew?'Add a card':'Edit '+esc(c.name)}</h3>
   <form id="f-card" class="sheet-in" style="gap:14px">
     <label>Card name<input id="cn" required value="${esc(c.name)}" placeholder="e.g. Chase Sapphire Preferred"></label>
-    <div class="row"><label>Annual fee ($)<input id="cf" type="number" min="0" step="1" value="${c.annualFee||0}"></label>
+    <div class="row"><label>Annual fee ($)<input id="cf" type="number" min="0" step="1" placeholder="0" value="${c.annualFee||''}"></label>
     <label>Fee charged on<input id="cfd" type="date" value="${esc(c.feeDate||'')}"></label></div>
     ${c.goal?`<div class="row"><label>Spending year starts<input id="cgs" type="date" value="${esc(c.goal.start||'')}"></label>
     <label>Spending goal ($)<input id="cgt" type="number" min="0" step="1" value="${c.goal.target}"></label></div>
@@ -927,6 +927,8 @@ function editSheet(isNew){
   });
 }
 
+/* Tapping a number box selects what's in it, so typing replaces the old value instead of adding to it. */
+document.addEventListener('focusin',e=>{const el=e.target;if(el.tagName==='INPUT'&&el.type==='number'&&el.value!=='')setTimeout(()=>{try{el.select()}catch(_){}},0)});
 document.addEventListener('click',e=>{
   const b=e.target.closest('[data-act]'); if(!b) return;
   const a=b.dataset.act;
