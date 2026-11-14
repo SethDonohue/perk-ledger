@@ -403,7 +403,7 @@ function atmosAscent(){
     logs:[]};
 }
 const CATALOG=[{key:'atmos-ascent',name:'Atmos Rewards Ascent',make:atmosAscent},{key:'cap1-venture',name:'Capital One Venture',make:capOneVenture},{key:'amex-gold',name:'Amex Gold',make:amexGold}];
-function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto','earn-cats-v1','atmos-auto','atmos-companion-2027','atmos-dates-2026']}}
+function defaultState(){return {v:1,selected:'amex-gold',cards:[amexGold()],added:['cap1-venture-auto','earn-cats-v1','atmos-auto','atmos-companion-2027','atmos-dates-2026','amex-bonus-2026-11']}}
 
 let state=null, syncNote='Saved on this phone', sheet=null;
 try{const raw=localStorage.getItem(LS_KEY); if(raw) state=JSON.parse(raw)}catch(e){}
@@ -411,6 +411,7 @@ try{const raw=localStorage.getItem(LS_KEY); if(raw) state=JSON.parse(raw)}catch(
 /* A spending goal runs a year from its own start date (e.g. the card's offer/anniversary date). */
 function goalWindow(g){
   if(!g||!g.start) return null;
+  if(g.once) return g.end?{start:parseD(g.start),end:parseD(g.end),next:null,once:true}:null;
   const a=parseD(g.start), t=today(); let y=t.getFullYear();
   const at=yy=>new Date(yy,a.getMonth(),Math.min(a.getDate(),new Date(yy,a.getMonth()+1,0).getDate()));
   while(at(y)>t) y--;
@@ -422,7 +423,7 @@ function goalWindow(g){
 function rollGoals(){
   if(!state||!Array.isArray(state.cards)) return;
   let changed=false;
-  state.cards.forEach(c=>{const w=goalWindow(c.goal);if(!w)return;
+  state.cards.forEach(c=>{const w=goalWindow(c.goal);if(!w||w.once)return;
     const ws=ymd(w.start);
     if(c.goal.windowStart&&c.goal.windowStart!==ws){c.goal.lastYear={start:c.goal.windowStart,spent:c.goal.spent||0};c.goal.spent=0;c.goal.updated=null;changed=true}
     if(c.goal.windowStart!==ws){c.goal.windowStart=ws;changed=true}
@@ -456,6 +457,14 @@ function migrate(){
     state.added.push('atmos-dates-2026');
     const at=state.cards.find(c=>c.id==='atmos-ascent');
     if(at){at.feeDate='2026-02-28';if(at.goal){at.goal.start='2026-02-13';at.goal.windowStart='2026-02-13'}}
+    try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
+  }
+  if(!state.added.includes('amex-bonus-2026-11')){
+    state.added.push('amex-bonus-2026-11');
+    const ag=state.cards.find(c=>c.id==='amex-gold');
+    if(ag&&!ag.goal) ag.goal={once:true,label:'Spend bonus: 25,000 points',short:'Amex bonus spend',target:2500,spent:0,updated:null,start:'2026-11-13',end:'2027-02-12',
+      source:'Amex app',done:'Goal reached. Watch for the 25,000 bonus to post.',
+      note:'Spend $2,500 in 3 months for 25,000 bonus points. Charges count when they post, and returns come off the total. Keep diesel on the Atmos unless you fall behind.'};
     try{localStorage.setItem(LS_KEY,JSON.stringify(state))}catch(e){}
   }
   if(!state.added.includes('earn-cats-v1')){
@@ -510,7 +519,8 @@ function adopt(data){
   if(sheet){pendingRemote=data;return}
   state=Object.assign(data,keep);
   if(!state.cards.find(c=>c.id===state.selected)) state.selected=state.cards[0]?.id||null;
-  rollGoals(); saveLocal(); render();
+  const before=(state.added||[]).length; migrate(); const grew=(state.added||[]).length>before;
+  rollGoals(); if(grew) persist(); else saveLocal(); render();
 }
 async function initSync(){
   if(!FIREBASE_CONFIG) return;
@@ -807,12 +817,23 @@ function addChooser(){
 function goalBlock(c,yr){
   const g=c.goal, f=Math.min(1,(g.spent||0)/g.target), left=Math.max(0,g.target-(g.spent||0));
   const gw=goalWindow(g);
-  const by=gw?` by ${fmtDate(ymd(gw.end))} (${daysLeft(gw.end)-1} days)`:yr.w.byFee?` by ${fmtDate(ymd(yr.w.next))}`:'';
+  const t=today(), over=gw&&gw.once&&t>gw.end;
+  const by=gw?(over?' · window ended '+fmtDate(ymd(gw.end)):` by ${fmtDate(ymd(gw.end))} (${daysLeft(gw.end)-1} days)`):yr.w.byFee?` by ${fmtDate(ymd(yr.w.next))}`:'';
+  let pace='';
+  if(gw&&gw.once&&left&&!over){
+    /* Aim to finish two weeks early so late-posting charges still count. */
+    const aim=new Date(gw.end.getFullYear(),gw.end.getMonth(),gw.end.getDate()-14);
+    const span=Math.max(1,(aim-gw.start)/864e5), gone=Math.min(span,Math.max(0,(t-gw.start)/864e5+1));
+    const should=g.target*gone/span, gap=should-(g.spent||0);
+    pace=`<div class="c-amt" style="color:${gap>0?'var(--warn)':'var(--good)'}">${gap>0?money(gap)+' behind pace':'On pace'} · aim to finish by ${fmtDate(ymd(aim))}</div>`;
+  }
+  const doneTxt=g.done||'Goal reached. The fare arrives on your anniversary.';
   return `<div class="goal">
-    <div class="goal-head"><span><b>${esc(g.label)}</b><small>${left?`${money(left)} to go${by}`:'Goal reached. The fare arrives on your anniversary.'}${g.updated?' · updated '+fmtDate(g.updated):''}</small></span>
+    <div class="goal-head"><span><b>${esc(g.label)}</b><small>${left?`${money(left)} to go${by}`:esc(doneTxt)}${g.updated?' · updated '+fmtDate(g.updated):''}</small></span>
       <button class="ghost" data-act="goal">Update spend</button></div>
     <div class="bar"><i style="width:${f*100}%;background:${f>=1?'var(--good)':'var(--brass)'}"></i></div>
-    <div class="c-amt"><span class="num">${money(g.spent||0)} of ${money(g.target)}</span>${gw?` · spending year ${fmtDate(ymd(gw.start))} \u2013 ${fmtDate(ymd(gw.end))}`:''}${g.lastYear?` · last year ${money(g.lastYear.spent)}`:''}</div>
+    <div class="c-amt"><span class="num">${money(g.spent||0)} of ${money(g.target)}</span>${gw?` · ${gw.once?'window':'spending year'} ${fmtDate(ymd(gw.start))} \u2013 ${fmtDate(ymd(gw.end))}`:''}${g.lastYear?` · last year ${money(g.lastYear.spent)}`:''}</div>
+    ${pace}
   </div>`;
 }
 function certSheet(cid){
@@ -826,11 +847,17 @@ function certSheet(cid){
 }
 function goalSheet(){
   const c=card(), g=c.goal;
-  openSheet(`<h3>Spending this card year</h3><div class="hint">${esc(g.note||'')} Copy the total from your Bank of America app (purchases since your last anniversary).</div>
+  const src=g.once?`Copy the total from your ${esc(g.source||'card app')} (purchases since ${fmtDate(g.start)}).`:'Copy the total from your Bank of America app (purchases since your last anniversary).';
+  openSheet(`<h3>${g.once?esc(g.label):'Spending this card year'}</h3><div class="hint">${esc(g.note||'')} ${src}</div>
     <form id="f-goal" class="sheet-in" style="gap:12px">
     <label>Spent so far ($)<input id="gs" type="number" inputmode="decimal" min="0" step="0.01" value="${g.spent||0}"></label>
-    <div class="actions"><button type="button" class="ghost" data-act="close">Cancel</button><button class="primary">Save</button></div></form>`,s=>{
-    s.querySelector('#f-goal').onsubmit=e=>{e.preventDefault();g.spent=Math.max(0,parseFloat(s.querySelector('#gs').value)||0);g.updated=ymd(today());closeSheet();persist();render();toast('Spending updated')};
+    ${g.once?`<div class="row"><label>Started<input id="gst" type="date" required value="${esc(g.start)}"></label><label>Deadline<input id="gen" type="date" required value="${esc(g.end)}"></label></div>`:''}
+    <div class="actions">${g.once?'<button type="button" class="ghost" id="g-rm">Remove goal</button>':''}<button type="button" class="ghost" data-act="close">Cancel</button><button class="primary">Save</button></div></form>`,s=>{
+    s.querySelector('#f-goal').onsubmit=e=>{e.preventDefault();g.spent=Math.max(0,parseFloat(s.querySelector('#gs').value)||0);g.updated=ymd(today());
+      if(g.once){const a=s.querySelector('#gst').value,b=s.querySelector('#gen').value;if(a&&b&&a<b){g.start=a;g.end=b}}
+      closeSheet();persist();render();toast('Spending updated')};
+    const rm=s.querySelector('#g-rm');
+    if(rm){let armed=false;rm.onclick=()=>{if(!armed){armed=true;rm.textContent='Tap again to remove';return}delete c.goal;closeSheet();persist();render();toast('Goal removed')}}
   });
 }
 function pointsSheet(){
